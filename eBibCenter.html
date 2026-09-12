@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Catálogo visual e consultável da Biblioteca de PDFs.">
+  <title>Biblioteca de PDFs</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%230d4a2d'/%3E%3Cpath d='M16 12h25l8 8v32H16z' fill='%23f4ecd7' stroke='%23b29138' stroke-width='3'/%3E%3Cpath d='M41 12v10h8' fill='none' stroke='%23b29138' stroke-width='3'/%3E%3Cpath d='M23 31h19M23 38h19M23 45h13' stroke='%230d4a2d' stroke-width='3'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/estilo.css">
+  <script src="dados.js" defer></script>
+  <script src="rede_citacoes.js" defer></script>
+  <script src="mapa_afinidade.js" defer></script>
+  <script src="assets/citacoes.js" defer></script>
+  <script src="assets/rede.js" defer></script>
+  <script src="assets/afinidade.js" defer></script>
+  <script src="assets/qualidade.js" defer></script>
+  <script src="assets/catalogo_online.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#resultados">Ir para os resultados</a>
+
+  <header class="masthead">
+    <div class="masthead__inner">
+      <div>
+        <p class="eyebrow">Biblioteca Digital</p>
+        <h1>Catálogo de PDFs</h1>
+      </div>
+      <div class="masthead__side">
+        <div class="masthead__summary" aria-label="Resumo da biblioteca">
+          <span id="total-documentos">0 documentos</span>
+          <span id="total-assuntos">0 assuntos</span>
+          <span id="atualizado-em">Atualizando...</span>
+        </div>
+        <div class="masthead__tools" aria-label="Ferramentas da biblioteca">
+          <span class="eyebrow">Versão online · PDFs não publicados</span>
+          <button id="abrir-qualidade" type="button">Qualidade e revisão</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section class="query-panel" aria-labelledby="consulta-titulo">
+      <div class="section-heading">
+        <span class="section-number">1</span>
+        <div>
+          <h2 id="consulta-titulo">Consultar a biblioteca</h2>
+          <p>Combine texto, assunto e subassunto. Os filtros também podem ser escritos diretamente na busca.</p>
+        </div>
+      </div>
+
+      <div class="search-wrap">
+        <label for="busca">Busca ou query</label>
+        <div class="search-field">
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m21 21-4.35-4.35m2.35-5.65a8 8 0 1 1-16 0 8 8 0 0 1 16 0Z"/></svg>
+          <input id="busca" type="search" autocomplete="off" spellcheck="false" placeholder='Ex.: conformal publicacao:arxiv assunto:"Machine Learning"'>
+          <kbd>/</kbd>
+        </div>
+      </div>
+
+      <div class="filters">
+        <label>
+          <span>Assunto</span>
+          <select id="filtro-assunto"><option value="">Todos os assuntos</option></select>
+        </label>
+        <label>
+          <span>Subassunto</span>
+          <select id="filtro-subassunto"><option value="">Todos os subassuntos</option></select>
+        </label>
+        <label>
+          <span>Tipo</span>
+          <select id="filtro-tipo"><option value="">Todos os tipos</option></select>
+        </label>
+        <label>
+          <span>Publicação</span>
+          <select id="filtro-publicacao"><option value="">Todas as publicações</option></select>
+        </label>
+        <label>
+          <span>Ano</span>
+          <select id="filtro-ano"><option value="">Todos os anos</option></select>
+        </label>
+        <label>
+          <span>Qualidade</span>
+          <select id="filtro-qualidade"><option value="">Todos os estados</option></select>
+        </label>
+        <label>
+          <span>Ordenar</span>
+          <select id="ordenacao">
+            <option value="titulo">Título</option>
+            <option value="autor">Autor</option>
+            <option value="assunto">Assunto</option>
+            <option value="ano-desc">Ano: mais recente</option>
+            <option value="ano-asc">Ano: mais antigo</option>
+          </select>
+        </label>
+        <button id="limpar" class="button button--quiet" type="button">Limpar filtros</button>
+      </div>
+
+      <details class="query-help">
+        <summary>Como escrever uma query</summary>
+        <div class="query-help__body">
+          <code>assunto:"Machine Learning"</code>
+          <code>subassunto:"Transformers"</code>
+          <code>autor:"Vovk"</code>
+          <code>tipo:artigo</code>
+          <code>publicacao:Springer</code>
+          <code>titulo:"conformal prediction"</code>
+          <p>Termos livres e operadores são combinados com lógica <strong>E</strong>.</p>
+        </div>
+      </details>
+    </section>
+
+    <section class="results-section" id="resultados" aria-labelledby="resultados-titulo">
+      <div class="results-header">
+        <div class="section-heading section-heading--compact">
+          <span class="section-number">2</span>
+          <div>
+            <h2 id="resultados-titulo">Documentos</h2>
+            <p id="resultado-contagem" aria-live="polite">Carregando catálogo...</p>
+          </div>
+        </div>
+        <div id="filtros-ativos" class="active-filters" aria-label="Filtros ativos"></div>
+      </div>
+
+      <div id="barra-exportacao" class="selection-bar" aria-label="Exportação bibliográfica em lote" hidden>
+        <div class="selection-bar__summary">
+          <strong id="selecao-contagem" aria-live="polite">0 documentos selecionados</strong>
+          <button id="selecionar-exibidos" type="button">Selecionar exibidos</button>
+        </div>
+        <label class="selection-bar__format" for="formato-exportacao">
+          <span>Formato</span>
+          <select id="formato-exportacao">
+            <option value="bibtex">BibTeX</option>
+            <option value="apa">APA</option>
+            <option value="abnt">ABNT</option>
+          </select>
+        </label>
+        <div class="selection-bar__actions">
+          <button id="copiar-selecao" type="button">Copiar</button>
+          <button id="baixar-selecao" type="button">Baixar arquivo</button>
+          <button id="limpar-selecao" type="button">Limpar seleção</button>
+        </div>
+      </div>
+
+      <div id="grade" class="catalog-grid"></div>
+
+      <div id="estado-vazio" class="empty-state" hidden>
+        <p class="eyebrow">Nenhum resultado</p>
+        <h3>A consulta não encontrou documentos.</h3>
+        <p>Remova um filtro ou tente termos mais amplos.</p>
+        <button class="button" type="button" data-clear>Limpar consulta</button>
+      </div>
+
+      <button id="carregar-mais" class="button button--more" type="button" hidden>Carregar mais</button>
+    </section>
+  </main>
+
+  <dialog id="detalhes" class="detail-dialog">
+    <div class="dialog-shell">
+      <button id="fechar-detalhes" class="close-button" type="button" aria-label="Fechar detalhes">×</button>
+      <div id="detalhes-conteudo"></div>
+    </div>
+  </dialog>
+
+  <dialog id="rede-bibliografica" class="network-dialog">
+    <div class="network-shell">
+      <button id="fechar-rede" class="close-button" type="button" aria-label="Fechar rede bibliográfica">×</button>
+      <div id="rede-conteudo"></div>
+    </div>
+  </dialog>
+
+  <dialog id="qualidade-biblioteca" class="utility-dialog">
+    <div class="utility-shell">
+      <button id="fechar-qualidade" class="close-button" type="button" aria-label="Fechar painel de qualidade">×</button>
+      <div id="qualidade-conteudo"></div>
+    </div>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</body>
+</html>
