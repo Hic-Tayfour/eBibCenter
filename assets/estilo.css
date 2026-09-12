@@ -8,6 +8,14 @@
   --forest-2: #173f2d;
   --gold: #b29138;
   --gold-soft: #d7c384;
+  --dendrogram-cluster-1: #2f6f5e;
+  --dendrogram-cluster-2: #a87424;
+  --dendrogram-cluster-3: #456f8c;
+  --dendrogram-cluster-4: #845f85;
+  --dendrogram-cluster-5: #9a5f42;
+  --dendrogram-cluster-6: #657a3f;
+  --dendrogram-cluster-7: #327c82;
+  --dendrogram-cluster-8: #98677a;
   --line: rgba(121, 94, 24, 0.3);
   --shadow: 0 18px 50px rgba(37, 45, 35, 0.12);
   --sans: Inter, Aptos, "Segoe UI", Arial, sans-serif;
@@ -154,7 +162,10 @@ main {
 }
 
 .query-panel {
-  padding-top: 1.3rem;
+  padding: 1.35rem;
+  background: rgba(255, 253, 246, 0.66);
+  border: 1px solid var(--gold-soft);
+  box-shadow: 0 10px 30px rgba(56, 53, 37, 0.06);
 }
 
 .section-heading {
@@ -286,10 +297,12 @@ a:focus-visible {
   font-family: var(--sans);
   font-size: 0.86rem;
   font-weight: 700;
+  transition: color 140ms ease, background 140ms ease, border-color 140ms ease, transform 140ms ease;
 }
 
 .button:hover {
   background: #0a3c24;
+  transform: translateY(-1px);
 }
 
 .button--quiet {
@@ -459,6 +472,7 @@ button.meta-chip:hover {
   border: 1px solid var(--gold-soft);
   box-shadow: 0 12px 32px rgba(56, 53, 37, 0.08);
   transition: transform 160ms ease, box-shadow 160ms ease;
+  height: 100%;
 }
 
 .book-card--selected {
@@ -500,7 +514,10 @@ button.meta-chip:hover {
 
 .book-card__button {
   width: 100%;
+  height: 100%;
   padding: 0;
+  display: grid;
+  grid-template-rows: auto 1fr;
   color: inherit;
   text-align: left;
   background: transparent;
@@ -546,6 +563,8 @@ button.meta-chip:hover {
 
 .book-card__body {
   padding: 1rem 1rem 1.1rem;
+  display: flex;
+  flex-direction: column;
 }
 
 .book-card__subject {
@@ -594,6 +613,7 @@ button.meta-chip:hover {
   color: var(--muted);
   font-family: var(--sans);
   font-size: 0.75rem;
+  margin-top: auto;
 }
 
 .bib-state {
@@ -637,7 +657,7 @@ button.meta-chip:hover {
 }
 
 .detail-dialog {
-  width: min(1050px, calc(100% - 2rem));
+  width: min(1180px, calc(100% - 2rem));
   max-width: none;
   max-height: calc(100vh - 2rem);
   padding: 0;
@@ -645,6 +665,7 @@ button.meta-chip:hover {
   background: var(--cream-light);
   border: 1px solid var(--gold);
   box-shadow: 0 28px 90px rgba(0, 0, 0, 0.38);
+  overflow: auto;
 }
 
 .detail-dialog::backdrop {
@@ -680,10 +701,19 @@ button.meta-chip:hover {
 }
 
 .detail__visual {
-  padding: 2rem;
+  position: relative;
+  align-self: stretch;
+  min-height: 100%;
+  padding: 0;
   color: white;
   background: var(--forest);
   border-right: 3px solid var(--gold);
+}
+
+.detail__visual-inner {
+  position: sticky;
+  top: 0;
+  padding: 2rem;
 }
 
 .detail__cover {
@@ -708,7 +738,7 @@ button.meta-chip:hover {
 }
 
 .detail__content {
-  padding: 2.2rem 2rem 2rem;
+  padding: 2rem 2.2rem 2.3rem;
   overflow-wrap: anywhere;
 }
 
@@ -734,6 +764,26 @@ button.meta-chip:hover {
   margin: 1.2rem 0;
 }
 
+.detail-section {
+  margin-top: 1.45rem;
+}
+
+.detail-section__heading {
+  margin-bottom: 0.55rem;
+}
+
+.detail-section__heading .eyebrow,
+.detail-section__heading h3 {
+  margin-bottom: 0;
+}
+
+.detail-section__heading h3 {
+  color: var(--forest);
+  font-family: var(--serif);
+  font-size: 1.35rem;
+  font-weight: 500;
+}
+
 .metadata {
   display: grid;
   grid-template-columns: 140px 1fr;
@@ -753,6 +803,42 @@ button.meta-chip:hover {
 .metadata dt {
   color: var(--muted);
   font-weight: 700;
+}
+
+.metadata-link {
+  color: var(--forest);
+  font-weight: 700;
+  text-underline-offset: 0.15em;
+}
+
+.file-details {
+  margin: -0.3rem 0 1rem;
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: 0.8rem;
+}
+
+.file-details summary {
+  width: fit-content;
+  color: var(--forest);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.file-details[open] summary {
+  margin-bottom: 0.35rem;
+}
+
+.metadata--technical {
+  margin: 0;
+  grid-template-columns: 110px 1fr;
+  background: rgba(109, 106, 95, 0.04);
+  border: 1px solid var(--line);
+}
+
+.metadata--technical dt,
+.metadata--technical dd {
+  padding: 0.5rem 0.65rem;
 }
 
 .detail__actions {
@@ -818,6 +904,247 @@ button.meta-chip:hover {
 
 .network-summary__empty {
   white-space: nowrap;
+}
+
+.relations-section {
+  margin-top: 1.5rem;
+}
+
+.relations-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.7rem;
+}
+
+.relations-grid .network-summary {
+  margin: 0;
+  align-items: stretch;
+  flex-direction: column;
+}
+
+.relations-grid .network-summary .button {
+  width: 100%;
+  margin-top: auto;
+}
+
+.relation-empty {
+  margin: 1.35rem 0 1.5rem;
+  padding: 0.8rem 0.9rem;
+  display: grid;
+  grid-template-columns: 2.2rem 1fr;
+  align-items: center;
+  gap: 0.75rem;
+  background: rgba(109, 106, 95, 0.055);
+  border: 1px dashed rgba(109, 106, 95, 0.4);
+}
+
+.relation-empty__mark {
+  display: grid;
+  width: 2.2rem;
+  height: 2.2rem;
+  place-items: center;
+  color: var(--muted);
+  border: 1px solid rgba(109, 106, 95, 0.38);
+  border-radius: 50%;
+  font-family: var(--sans);
+  font-weight: 800;
+}
+
+.relation-empty .eyebrow,
+.relation-empty h3,
+.relation-empty p {
+  margin: 0;
+}
+
+.relation-empty h3 {
+  color: var(--forest);
+  font-family: var(--serif);
+  font-size: 1.05rem;
+  font-weight: 500;
+}
+
+.relation-empty p:not(.eyebrow) {
+  margin-top: 0.12rem;
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: 0.76rem;
+}
+
+.library-context {
+  margin: 1.45rem 0;
+  padding: 1rem;
+  background: linear-gradient(135deg, rgba(13, 74, 45, 0.085), rgba(178, 145, 56, 0.07));
+  border: 1px solid var(--gold-soft);
+  border-top: 4px solid var(--forest);
+}
+
+.library-context--loading,
+.library-context--empty {
+  border-top-color: var(--gold);
+}
+
+.library-context--loading {
+  position: relative;
+  overflow: hidden;
+}
+
+.library-context--loading::after {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  content: "";
+  background: linear-gradient(90deg, transparent, var(--gold), transparent);
+  animation: context-loading 1.1s linear infinite;
+}
+
+@keyframes context-loading {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(100%); }
+}
+
+.library-context__heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.library-context .eyebrow,
+.library-context h3,
+.library-context h4,
+.library-context p {
+  margin-top: 0;
+}
+
+.library-context h3 {
+  margin-bottom: 0;
+  color: var(--forest);
+  font-family: var(--serif);
+  font-size: 1.4rem;
+  font-weight: 500;
+  line-height: 1.2;
+}
+
+.library-context > p,
+.library-context__summary p,
+.library-context__footer p {
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: 0.78rem;
+}
+
+.library-context__summary {
+  margin-top: 0.8rem;
+  padding: 0.75rem;
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  align-items: center;
+  gap: 0.8rem;
+  background: rgba(255, 253, 246, 0.7);
+  border: 1px solid var(--line);
+}
+
+.library-context__summary > div {
+  display: grid;
+  gap: 0.1rem;
+  padding-right: 0.8rem;
+  border-right: 1px solid var(--line);
+}
+
+.library-context__summary span {
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.library-context__summary strong {
+  color: var(--forest);
+  font-family: var(--serif);
+  font-size: 1.8rem;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.library-context button:not(.button) {
+  padding: 0;
+  color: var(--forest);
+  background: transparent;
+  border: 0;
+  font-weight: 700;
+  text-align: left;
+}
+
+.library-context button:not(.button):hover {
+  text-decoration: underline;
+}
+
+.library-context__evidence {
+  margin: 0.65rem 0;
+}
+
+.library-context__related {
+  padding-top: 0.7rem;
+  border-top: 1px solid var(--line);
+}
+
+.library-context__related h4 {
+  margin-bottom: 0.45rem;
+  color: var(--forest);
+  font-family: var(--sans);
+  font-size: 0.73rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.library-context__related ol {
+  margin: 0;
+  padding-left: 1.25rem;
+  display: grid;
+  gap: 0.48rem;
+}
+
+.library-context__related li {
+  padding-left: 0.15rem;
+  color: var(--gold);
+  font-family: var(--sans);
+  font-size: 0.76rem;
+}
+
+.library-context__related li button {
+  display: block;
+  line-height: 1.3;
+}
+
+.library-context__related li span {
+  display: block;
+  margin-top: 0.08rem;
+  color: var(--muted);
+  font-size: 0.69rem;
+}
+
+.library-context__footer {
+  margin-top: 0.8rem;
+  padding-top: 0.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border-top: 1px solid var(--line);
+}
+
+.library-context__footer p {
+  margin-bottom: 0;
+}
+
+.library-context__nearest {
+  margin: 0.65rem 0 0 !important;
+  padding-top: 0.65rem;
+  border-top: 1px solid var(--line);
 }
 
 .network-dialog {
@@ -1767,6 +2094,464 @@ button.meta-chip:hover {
   transform: translateY(0);
 }
 
+.dendrogram-dialog {
+  width: min(1320px, calc(100% - 2rem));
+  max-width: none;
+  max-height: calc(100vh - 2rem);
+  padding: 0;
+  overflow: hidden;
+  color: var(--ink);
+  background: var(--cream-light);
+  border: 1px solid var(--gold);
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.38);
+}
+
+.dendrogram-dialog::backdrop {
+  background: rgba(9, 28, 19, 0.78);
+  backdrop-filter: blur(4px);
+}
+
+.dendrogram-shell {
+  position: relative;
+  max-height: calc(100vh - 2rem);
+  padding: 1.7rem;
+  overflow: auto;
+}
+
+.dendrogram-header {
+  padding-right: 3rem;
+}
+
+.dendrogram-header h2 {
+  margin: 0;
+  color: var(--forest);
+  font-family: var(--serif);
+  font-size: clamp(2rem, 4vw, 3.2rem);
+  font-weight: 400;
+  line-height: 1.05;
+}
+
+.dendrogram-header > p:last-child,
+.dendrogram-status,
+.dendrogram-note,
+.dendrogram-loading {
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: 0.84rem;
+}
+
+.affinity-overview {
+  margin: 1.25rem 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.affinity-overview article {
+  min-height: 7.2rem;
+  padding: 1rem;
+  display: grid;
+  align-content: space-between;
+  background: #fffdf6;
+  border: 1px solid var(--line);
+}
+
+.affinity-overview strong {
+  color: var(--forest);
+  font-family: var(--serif);
+  font-size: clamp(2rem, 4vw, 2.7rem);
+  font-weight: 500;
+  line-height: 1;
+}
+
+.affinity-overview span {
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: 0.76rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.affinity-explainer {
+  padding: 1rem 1.1rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(250px, 0.7fr);
+  gap: 1rem;
+  background: rgba(178, 145, 56, 0.09);
+  border-left: 4px solid var(--gold);
+}
+
+.affinity-explainer h3,
+.affinity-collections__heading h3,
+.affinity-unassigned h3,
+.dendrogram-technical__heading h3 {
+  margin-bottom: 0.2rem;
+  color: var(--forest);
+  font-family: var(--serif);
+  font-size: 1.35rem;
+  font-weight: 500;
+}
+
+.affinity-explainer p,
+.affinity-collections__heading p,
+.affinity-unassigned p,
+.dendrogram-technical__heading p {
+  margin-bottom: 0;
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: 0.8rem;
+}
+
+.affinity-explainer > p {
+  padding-left: 1rem;
+  border-left: 1px solid var(--line);
+}
+
+.affinity-collections__heading {
+  margin: 1.5rem 0 0.8rem;
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.affinity-collections {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.9rem;
+}
+
+.affinity-collection {
+  position: relative;
+  min-width: 0;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  background: #fffdf6;
+  border: 1px solid var(--line);
+  border-top: 5px solid var(--cluster-color);
+  box-shadow: 0 8px 22px rgba(37, 45, 35, 0.06);
+}
+
+.affinity-collection--hidden {
+  display: none;
+}
+
+.affinity-collection__heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.7rem;
+}
+
+.affinity-collection__code {
+  color: var(--cluster-color);
+  font-family: var(--sans);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+}
+
+.affinity-confidence {
+  padding: 0.18rem 0.46rem;
+  color: var(--forest);
+  background: rgba(47, 111, 94, 0.11);
+  border: 1px solid rgba(47, 111, 94, 0.35);
+  font-family: var(--sans);
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.affinity-confidence--moderada {
+  color: #725112;
+  background: rgba(178, 145, 56, 0.12);
+  border-color: rgba(178, 145, 56, 0.42);
+}
+
+.affinity-confidence--exploratoria {
+  color: #6e4a39;
+  background: rgba(154, 95, 66, 0.1);
+  border-color: rgba(154, 95, 66, 0.36);
+}
+
+.affinity-collection h4 {
+  margin: 0.7rem 0 0.18rem;
+  color: var(--forest);
+  font-family: var(--serif);
+  font-size: 1.25rem;
+  font-weight: 500;
+  line-height: 1.18;
+}
+
+.affinity-collection__count {
+  margin-bottom: 0.8rem;
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: 0.76rem;
+}
+
+.affinity-collection__metrics {
+  margin: 0;
+  display: grid;
+  gap: 0.58rem;
+}
+
+.affinity-collection__metrics div {
+  display: grid;
+  gap: 0.08rem;
+}
+
+.affinity-collection__metrics dt {
+  color: var(--gold);
+  font-family: var(--sans);
+  font-size: 0.65rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.affinity-collection__metrics dd {
+  margin: 0;
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: 0.74rem;
+  line-height: 1.35;
+}
+
+.affinity-collection__metrics button,
+.affinity-collection__works button {
+  padding: 0;
+  color: var(--ink);
+  background: transparent;
+  border: 0;
+  text-align: left;
+}
+
+.affinity-collection__metrics button:hover,
+.affinity-collection__works button:hover {
+  color: var(--forest);
+  text-decoration: underline;
+}
+
+.affinity-collection__works {
+  margin: 0.85rem 0 1rem;
+  padding: 0.72rem 0 0 1.1rem;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: 0.72rem;
+}
+
+.affinity-collection__works li + li {
+  margin-top: 0.25rem;
+}
+
+.affinity-collection__extra {
+  color: var(--gold);
+  font-weight: 700;
+}
+
+.affinity-collection__apply {
+  width: 100%;
+  margin-top: auto;
+}
+
+.affinity-collections__more {
+  margin-top: 0.9rem;
+}
+
+.affinity-collections__empty {
+  margin-top: 0;
+}
+
+.affinity-unassigned {
+  margin-top: 1.2rem;
+  padding: 0.9rem 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  background: rgba(109, 106, 95, 0.06);
+  border: 1px dashed rgba(109, 106, 95, 0.42);
+}
+
+.affinity-unassigned > div {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+}
+
+.affinity-unassigned__number {
+  min-width: 3.3rem;
+  color: var(--muted);
+  font-family: var(--serif);
+  font-size: 2.3rem;
+  line-height: 1;
+}
+
+.dendrogram-technical {
+  margin-top: 1.6rem;
+  padding-top: 1.2rem;
+  border-top: 2px solid var(--gold);
+}
+
+.dendrogram-technical[hidden] {
+  display: none;
+}
+
+.dendrogram-toolbar {
+  margin: 1.1rem 0 0.65rem;
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 0.8rem 1.2rem;
+}
+
+.dendrogram-toolbar label {
+  min-width: min(410px, 100%);
+  display: grid;
+  grid-template-columns: auto minmax(140px, 1fr) 2.2rem;
+  align-items: center;
+  gap: 0.7rem;
+  color: var(--forest);
+  font-family: var(--sans);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.dendrogram-toolbar input[type="range"] {
+  width: 100%;
+  accent-color: var(--forest);
+}
+
+.dendrogram-toolbar output {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.dendrogram-status {
+  margin: 0.45rem 0 0.75rem;
+}
+
+.dendrogram-clusters {
+  margin-bottom: 0.85rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 0.4rem 0.8rem;
+}
+
+.dendrogram-cluster {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 0.7rem auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: 0.74rem;
+}
+
+.dendrogram-cluster strong {
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.dendrogram-cluster span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dendrogram-cluster__swatch {
+  width: 0.62rem;
+  height: 0.62rem;
+  background: var(--cluster-color);
+}
+
+.dendrogram-clusters__more {
+  margin: 0;
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: 0.74rem;
+}
+
+.dendrogram-chart {
+  max-height: min(68vh, 760px);
+  overflow: auto;
+  background: #fffdf6;
+  border: 1px solid var(--line);
+}
+
+.dendrogram-chart svg {
+  display: block;
+  width: 100%;
+  min-width: 920px;
+  font-family: var(--sans);
+}
+
+.dendrogram-frame {
+  fill: transparent;
+  stroke: var(--line);
+}
+
+.dendrogram-grid {
+  stroke: rgba(121, 94, 24, 0.15);
+  stroke-width: 1;
+}
+
+.dendrogram-axis,
+.dendrogram-axis-title {
+  fill: var(--muted);
+  font-size: 11px;
+}
+
+.dendrogram-axis-title {
+  fill: var(--ink);
+  font-weight: 700;
+}
+
+.dendrogram-branch {
+  fill: none;
+  stroke: var(--branch-color, #9d9a8c);
+  stroke-width: 1.5;
+}
+
+.dendrogram-leaf {
+  cursor: pointer;
+  outline: none;
+}
+
+.dendrogram-leaf__dot {
+  fill: var(--leaf-color);
+}
+
+.dendrogram-leaf__label {
+  fill: var(--ink);
+  font-size: 11px;
+}
+
+.dendrogram-leaf__group {
+  fill: var(--leaf-color);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.dendrogram-leaf:hover .dendrogram-leaf__label,
+.dendrogram-leaf:focus .dendrogram-leaf__label {
+  fill: var(--forest);
+  font-weight: 700;
+  text-decoration: underline;
+}
+
+.dendrogram-note {
+  margin: 0.7rem 0 0;
+  padding-left: 0.75rem;
+  border-left: 3px solid var(--gold);
+}
+
 @media (max-width: 900px) {
   .filters {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1796,8 +2581,14 @@ button.meta-chip:hover {
   }
 
   .detail__visual {
+    position: static;
+    min-height: 0;
     border-right: 0;
     border-bottom: 3px solid var(--gold);
+  }
+
+  .detail__visual-inner {
+    position: static;
   }
 
   .detail__cover {
@@ -1813,6 +2604,10 @@ button.meta-chip:hover {
     grid-template-columns: 1fr;
   }
 
+  .relations-grid {
+    grid-template-columns: 1fr;
+  }
+
   .affinity-list {
     grid-template-columns: 1fr;
   }
@@ -1825,6 +2620,26 @@ button.meta-chip:hover {
   .viewer-toolbar {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .dendrogram-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .affinity-overview,
+  .affinity-collections {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .affinity-explainer {
+    grid-template-columns: 1fr;
+  }
+
+  .affinity-explainer > p {
+    padding: 0.8rem 0 0;
+    border-top: 1px solid var(--line);
+    border-left: 0;
   }
 
   .viewer-toolbar h2 {
@@ -1874,9 +2689,13 @@ button.meta-chip:hover {
     flex-direction: column;
   }
 
-  .detail__visual,
+  .detail__visual-inner,
   .detail__content {
     padding: 1.2rem;
+  }
+
+  .query-panel {
+    padding: 1rem;
   }
 
   .metadata {
@@ -1886,6 +2705,26 @@ button.meta-chip:hover {
   .metadata dt {
     padding-bottom: 0;
     border-bottom: 0;
+  }
+
+  .library-context__heading,
+  .library-context__footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .library-context__summary {
+    grid-template-columns: 1fr;
+  }
+
+  .library-context__summary > div {
+    padding: 0 0 0.65rem;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .library-context__footer .button {
+    width: 100%;
   }
 
   .selection-bar,
@@ -1941,6 +2780,32 @@ button.meta-chip:hover {
 
   .viewer-toolbar__controls label {
     display: none;
+  }
+
+  .dendrogram-shell {
+    padding: 1.1rem;
+  }
+
+  .dendrogram-toolbar label {
+    min-width: 100%;
+    grid-template-columns: 1fr;
+  }
+
+  .affinity-overview,
+  .affinity-collections {
+    grid-template-columns: 1fr;
+  }
+
+  .affinity-collections__heading,
+  .affinity-unassigned,
+  .affinity-unassigned > div {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .affinity-unassigned .button,
+  .affinity-collections__heading .button {
+    width: 100%;
   }
 }
 

@@ -13,6 +13,7 @@
   <script src="assets/citacoes.js" defer></script>
   <script src="assets/rede.js" defer></script>
   <script src="assets/afinidade.js" defer></script>
+  <script src="assets/dendrograma.js" defer></script>
   <script src="assets/qualidade.js" defer></script>
   <script src="assets/catalogo_online.js" defer></script>
 </head>
@@ -32,6 +33,7 @@
           <span id="atualizado-em">Atualizando...</span>
         </div>
         <div class="masthead__tools" aria-label="Ferramentas da biblioteca">
+          <button id="abrir-dendrograma" type="button">Coleções sugeridas</button>
           <span class="eyebrow">Versão online · PDFs não publicados</span>
           <button id="abrir-qualidade" type="button">Qualidade e revisão</button>
         </div>
@@ -136,6 +138,7 @@
           </select>
         </label>
         <div class="selection-bar__actions">
+          <button id="dendrograma-selecao" type="button">Agrupar seleção</button>
           <button id="copiar-selecao" type="button">Copiar</button>
           <button id="baixar-selecao" type="button">Baixar arquivo</button>
           <button id="limpar-selecao" type="button">Limpar seleção</button>
@@ -166,6 +169,13 @@
     <div class="network-shell">
       <button id="fechar-rede" class="close-button" type="button" aria-label="Fechar rede bibliográfica">×</button>
       <div id="rede-conteudo"></div>
+    </div>
+  </dialog>
+
+  <dialog id="dendrograma-afinidade" class="dendrogram-dialog">
+    <div class="dendrogram-shell">
+      <button id="fechar-dendrograma" class="close-button" type="button" aria-label="Fechar coleções sugeridas">×</button>
+      <div id="dendrograma-conteudo"></div>
     </div>
   </dialog>
 

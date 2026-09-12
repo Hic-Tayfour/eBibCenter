@@ -6,10 +6,12 @@
   const citacoes = window.Citacoes;
   const rede = window.RedeCitacoes;
   const afinidade = window.MapaAfinidade;
+  const dendrograma = window.DendrogramaAfinidade;
   const qualidade = window.QualidadeBiblioteca;
   const pageSize = 48;
   let limite = pageSize;
   let resultados = [];
+  let colecaoAtiva = null;
   const selecionados = new Set();
   let toastTimer;
 
@@ -39,6 +41,11 @@
     copiarSelecao: document.querySelector("#copiar-selecao"),
     baixarSelecao: document.querySelector("#baixar-selecao"),
     limparSelecao: document.querySelector("#limpar-selecao"),
+    dendrogramaSelecao: document.querySelector("#dendrograma-selecao"),
+    abrirDendrograma: document.querySelector("#abrir-dendrograma"),
+    dendrogramaDialog: document.querySelector("#dendrograma-afinidade"),
+    dendrogramaConteudo: document.querySelector("#dendrograma-conteudo"),
+    fecharDendrograma: document.querySelector("#fechar-dendrograma"),
     redeDialog: document.querySelector("#rede-bibliografica"),
     redeConteudo: document.querySelector("#rede-conteudo"),
     fecharRede: document.querySelector("#fechar-rede"),
@@ -187,6 +194,7 @@
   function filterRecords(state) {
     const query = parseQuery(state.q);
     return sortRecords(catalogo.filter(record => {
+      if (colecaoAtiva && !colecaoAtiva.ids.has(record.id)) return false;
       if (state.assunto && record.assunto !== state.assunto) return false;
       if (state.subassunto && record.subassunto !== state.subassunto) return false;
       if (state.tipo && record.tipo !== state.tipo) return false;
@@ -241,6 +249,7 @@
       ["publicacao", state.publicacao, "Publicação"],
       ["ano", state.ano, "Ano"],
       ["qualidade", state.qualidade ? qualidade?.label(state.qualidade) : "", "Qualidade"],
+      ["colecao", colecaoAtiva?.label || "", "Coleção sugerida"],
     ].filter(([, value]) => value);
     el.ativos.innerHTML = filters.map(([field, value, label]) =>
       `<button type="button" class="filter-chip" data-remove="${field}">${escapeHtml(label)}: ${escapeHtml(value)} <span aria-hidden="true">×</span></button>`
@@ -263,6 +272,7 @@
   }
 
   function clearAll() {
+    colecaoAtiva = null;
     el.busca.value = "";
     el.assunto.value = "";
     updateSubsubjects();
@@ -323,6 +333,103 @@
     return `bibliografia-${date}.${citacoes.extension(formatName)}`;
   }
 
+  function bibField(record, field) {
+    const match = String(record.bibtex || "").match(
+      new RegExp(`${field}\\s*=\\s*(?:\\{([^}]*)\\}|"([^"]*)")`, "i")
+    );
+    return (match?.[1] || match?.[2] || "").trim();
+  }
+
+  function safeExternalUrl(value) {
+    try {
+      const url = new URL(value);
+      return ["http:", "https:"].includes(url.protocol) ? url.href : "";
+    } catch {
+      return "";
+    }
+  }
+
+  function bibliographicRows(record) {
+    const edition = bibField(record, "edition");
+    const volume = bibField(record, "volume");
+    const number = bibField(record, "number");
+    const doi = bibField(record, "doi");
+    const isbn = bibField(record, "isbn");
+    const eprint = bibField(record, "eprint");
+    const url = safeExternalUrl(bibField(record, "url"));
+    const rows = [
+      ["Ano", escapeHtml(record.ano || "Não identificado")],
+      ["Páginas", record.paginas ?? "Não disponível"],
+      ["Publicação", escapeHtml(record.publicacao || "Não identificada no BibTeX")],
+    ];
+    if (edition) rows.push(["Edição", escapeHtml(edition)]);
+    if (volume || number) rows.push(["Volume / número", escapeHtml([volume, number].filter(Boolean).join(" / "))]);
+    if (doi) {
+      const doiUrl = safeExternalUrl(`https://doi.org/${doi}`);
+      rows.push(["DOI", doiUrl ? `<a class="metadata-link" href="${escapeHtml(doiUrl)}" target="_blank" rel="noreferrer">${escapeHtml(doi)}</a>` : escapeHtml(doi)]);
+    }
+    if (isbn) rows.push(["ISBN", escapeHtml(isbn)]);
+    if (eprint) rows.push(["Identificador", escapeHtml(`arXiv:${eprint}`)]);
+    if (url) rows.push(["Página oficial", `<a class="metadata-link" href="${escapeHtml(url)}" target="_blank" rel="noreferrer">Abrir fonte</a>`]);
+    return rows.map(([label, value]) => `<dt>${label}</dt><dd>${value}</dd>`).join("");
+  }
+
+  function detailContextMarkup(context) {
+    if (!context) {
+      return `
+        <section class="library-context library-context--empty" data-library-context>
+          <div><p class="eyebrow">Descoberta local</p><h3>Contexto na biblioteca</h3></div>
+          <p>Não foi possível obter o contexto de afinidade desta obra.</p>
+        </section>`;
+    }
+    if (context.status === "unassigned") {
+      const nearest = context.nearest;
+      return `
+        <section class="library-context library-context--empty" data-library-context>
+          <div class="library-context__heading">
+            <div><p class="eyebrow">Descoberta local</p><h3>Sem coleção confiável</h3></div>
+            <span class="affinity-confidence affinity-confidence--exploratoria">Não agrupada</span>
+          </div>
+          <p>O sistema preservou esta obra fora das coleções porque nenhum vínculo ultrapassou o limiar mínimo de 25% dentro do corte sugerido.</p>
+          ${nearest ? `<p class="library-context__nearest"><strong>Candidato mais próximo:</strong> <button type="button" data-open="${escapeHtml(nearest.id)}">${escapeHtml(nearest.title)}</button> · ${Math.round(nearest.similarity * 100)}% · ${escapeHtml(nearest.reasons.join(", "))}</p>` : ""}
+        </section>`;
+    }
+    return `
+      <section class="library-context" data-library-context>
+        <div class="library-context__heading">
+          <div><p class="eyebrow">Descoberta local · ${escapeHtml(context.code)}</p><h3>${escapeHtml(context.title)}</h3></div>
+          <span class="affinity-confidence affinity-confidence--${escapeHtml(context.level.code)}">${escapeHtml(context.level.label)}</span>
+        </div>
+        <div class="library-context__summary">
+          <div><span>Vínculo mais forte</span><strong>${Math.round(context.proximity * 100)}%</strong></div>
+          <p>${context.size} obras nesta coleção · representante: <button type="button" data-open="${escapeHtml(context.representative.id)}">${escapeHtml(context.representative.titulo)}</button></p>
+        </div>
+        <p class="library-context__evidence"><strong>Base observada:</strong> ${escapeHtml(context.evidence.join(" · "))}</p>
+        <div class="library-context__related">
+          <h4>Obras mais próximas</h4>
+          <ol>
+            ${context.related.map(item => `
+              <li>
+                <button type="button" data-open="${escapeHtml(item.id)}">${escapeHtml(item.title)}</button>
+                <span>${Math.round(item.similarity * 100)}% · ${escapeHtml(item.reasons.join(", "))}</span>
+              </li>`).join("")}
+          </ol>
+        </div>
+        <div class="library-context__footer">
+          <p>Indicador comparativo local; não representa probabilidade nem comprovação bibliográfica.</p>
+          <button class="button button--quiet" type="button" data-family-filter="${escapeHtml(context.id)}">Ver coleção no catálogo</button>
+        </div>
+      </section>`;
+  }
+
+  function loadingContextMarkup() {
+    return `
+      <section class="library-context library-context--loading" data-library-context aria-live="polite">
+        <div><p class="eyebrow">Descoberta local</p><h3>Contexto na biblioteca</h3></div>
+        <p>Calculando a coleção sugerida e as obras mais próximas…</p>
+      </section>`;
+  }
+
   function detailMarkup(record) {
     const authors = record.autores?.length ? record.autores.join("; ") : "Autoria não identificada";
     const missing = record.bibIncompleto || [];
@@ -332,7 +439,8 @@
     const affinity = afinidade?.summary(record.id) || { traceable: false, references: null, related: 0 };
     const bib = qualidade?.bibStatus(record) || { code: "estrutural", label: "Completo não verificado", detail: record.bibFonte || "" };
     const qualityIssues = (qualidade?.issues(record) || [])
-      .filter(issue => !issue.startsWith("bib-"));
+      .filter(issue => !issue.startsWith("bib-"))
+      .filter(issue => !["referencias-nao-detectadas", "afinidade-nao-calculavel"].includes(issue));
     const networkBibliography = network.bibliographyState === "not_found"
       ? "Sem seção bibliográfica formal detectada neste PDF."
       : Number.isInteger(network.referencesFound)
@@ -341,11 +449,20 @@
     const affinityDescription = affinity.traceable
       ? `${affinity.references ?? 0} referências rastreadas · ${affinity.related} ${affinity.related === 1 ? "obra relacionada" : "obras relacionadas"}`
       : affinity.message || "Não foi possível calcular afinidade por referências compartilhadas.";
+    const hasNetworkRelations = networkInScope && network.total > 0;
+    const hasAffinityRelations = affinity.available && affinity.traceable && affinity.related > 0;
+    const relationEmptyMessage = network.bibliographyState === "not_found"
+      ? "Nenhuma relação por citações foi confirmada. O extrator não detectou uma seção bibliográfica formal neste PDF; isso pode ser normal para este tipo de material."
+      : affinity.traceable
+        ? "A bibliografia foi rastreada, mas não houve sobreposição suficiente com outras obras da base."
+        : "Nenhuma relação por citações foi confirmada e a afinidade por referências não pôde ser calculada.";
     return `
       <article class="detail">
         <div class="detail__visual">
-          ${coverMarkup(record, "detail__cover")}
-          <p>${escapeHtml(record.nomeArquivo)}</p>
+          <div class="detail__visual-inner">
+            ${coverMarkup(record, "detail__cover")}
+            <p>${escapeHtml(record.nomeArquivo)}</p>
+          </div>
         </div>
         <div class="detail__content">
           <p class="eyebrow">${escapeHtml(record.assunto)} · ${escapeHtml(record.subassunto)}</p>
@@ -357,34 +474,55 @@
             <span class="meta-chip">${escapeHtml(record.tipo)}</span>
             <span class="meta-chip bib-state bib-state--${escapeHtml(bib.code)}">${escapeHtml(bib.label)}</span>
           </div>
-          <dl class="metadata">
-            <dt>Ano</dt><dd>${escapeHtml(record.ano || "Não identificado")}</dd>
-            <dt>Páginas</dt><dd>${record.paginas ?? "Não disponível"}</dd>
-            <dt>Arquivo</dt><dd>${escapeHtml(record.nomeArquivo)}</dd>
-            <dt>Publicação</dt><dd>${escapeHtml(record.publicacao || "Não identificada no BibTeX")}</dd>
-            <dt>Tags</dt><dd>${escapeHtml((record.tags || []).join(", ") || "Sem tags")}</dd>
-          </dl>
+          <section class="detail-section detail-section--metadata" aria-labelledby="metadata-title">
+            <div class="detail-section__heading">
+              <p class="eyebrow">Ficha catalográfica</p>
+              <h3 id="metadata-title">Identificação bibliográfica</h3>
+            </div>
+            <dl class="metadata">${bibliographicRows(record)}</dl>
+          </section>
+          <details class="file-details">
+            <summary>Arquivo, localização e tags</summary>
+            <dl class="metadata metadata--technical">
+              <dt>Arquivo</dt><dd>${escapeHtml(record.nomeArquivo)}</dd>
+              <dt>Tags</dt><dd>${escapeHtml((record.tags || []).join(", ") || "Sem tags")}</dd>
+            </dl>
+          </details>
           <div class="detail__actions"><span class="quality-inline">PDFs e notas ficam disponíveis apenas na biblioteca local.</span></div>
           ${qualityIssues.length ? `<p class="quality-inline"><strong>Revisar:</strong> ${qualityIssues.map(issue => escapeHtml(qualidade.label(issue))).join(" · ")}</p>` : ""}
-          ${networkInScope ? `
-            <section class="network-summary" aria-labelledby="network-summary-title">
-              <div>
-                <p class="eyebrow">Citações locais diretas · ${escapeHtml(networkScope)}</p>
-                <h3 id="network-summary-title">Relações bibliográficas</h3>
-                ${networkBibliography ? `<p>${escapeHtml(networkBibliography)}</p>` : ""}
-                <p>${network.cited} ${network.cited === 1 ? "obra da base citada" : "obras da base citadas"} · ${network.citedBy} ${network.citedBy === 1 ? "obra da base cita" : "obras da base citam"} esta fonte</p>
+          ${loadingContextMarkup()}
+          ${hasNetworkRelations || hasAffinityRelations ? `
+            <section class="detail-section relations-section" aria-labelledby="relations-title">
+              <div class="detail-section__heading">
+                <p class="eyebrow">Evidência bibliográfica</p>
+                <h3 id="relations-title">Relações confirmadas</h3>
               </div>
-              ${network.total ? `<button class="button" type="button" data-open-network="${escapeHtml(record.id)}">Explorar citações</button>` : `<span class="network-summary__empty">Nenhuma conexão local confirmada</span>`}
-            </section>` : ""}
-          ${affinity.available ? `
-            <section class="network-summary network-summary--affinity" aria-labelledby="affinity-summary-title">
-              <div>
-                <p class="eyebrow">Referências compartilhadas</p>
-                <h3 id="affinity-summary-title">Mapa de afinidade</h3>
-                <p>${escapeHtml(affinityDescription)}</p>
+              <div class="relations-grid">
+                ${hasNetworkRelations ? `
+                  <article class="network-summary" aria-labelledby="network-summary-title">
+                    <div>
+                      <p class="eyebrow">Citações locais diretas · ${escapeHtml(networkScope)}</p>
+                      <h3 id="network-summary-title">Relações bibliográficas</h3>
+                      ${networkBibliography ? `<p>${escapeHtml(networkBibliography)}</p>` : ""}
+                      <p>${network.cited} ${network.cited === 1 ? "obra da base citada" : "obras da base citadas"} · ${network.citedBy} ${network.citedBy === 1 ? "obra da base cita" : "obras da base citam"} esta fonte</p>
+                    </div>
+                    <button class="button" type="button" data-open-network="${escapeHtml(record.id)}">Explorar citações</button>
+                  </article>` : ""}
+                ${hasAffinityRelations ? `
+                  <article class="network-summary network-summary--affinity" aria-labelledby="affinity-summary-title">
+                    <div>
+                      <p class="eyebrow">Referências compartilhadas</p>
+                      <h3 id="affinity-summary-title">Mapa de afinidade</h3>
+                      <p>${escapeHtml(affinityDescription)}</p>
+                    </div>
+                    <button class="button" type="button" data-open-affinity="${escapeHtml(record.id)}">Explorar afinidades</button>
+                  </article>` : ""}
               </div>
-              ${affinity.traceable && affinity.related ? `<button class="button" type="button" data-open-affinity="${escapeHtml(record.id)}">Explorar afinidades</button>` : `<span class="network-summary__empty">${affinity.traceable ? "Sem sobreposição suficiente" : "Afinidade não calculável"}</span>`}
-            </section>` : ""}
+            </section>` : `
+            <aside class="relation-empty">
+              <div class="relation-empty__mark" aria-hidden="true">↔</div>
+              <div><p class="eyebrow">Relações confirmadas</p><h3>Nenhuma conexão local disponível</h3><p>${escapeHtml(relationEmptyMessage)}</p></div>
+            </aside>`}
           <div class="bib-heading">
             <div>
               <h3 data-citation-title>Referência em BibTeX</h3>
@@ -417,7 +555,17 @@
     el.conteudo.innerHTML = detailMarkup(record);
     el.dialog.dataset.current = id;
     el.dialog.dataset.citationFormat = "bibtex";
-    el.dialog.showModal();
+    if (!el.dialog.open) el.dialog.showModal();
+    window.setTimeout(() => {
+      if (el.dialog.dataset.current !== id) return;
+      const target = el.conteudo.querySelector("[data-library-context]");
+      if (!target) return;
+      try {
+        target.outerHTML = detailContextMarkup(dendrograma?.context?.(id) || null);
+      } catch {
+        target.outerHTML = detailContextMarkup(null);
+      }
+    }, 0);
   }
 
   function openNetwork(id, direction = "both") {
@@ -437,6 +585,26 @@
     el.redeDialog.dataset.view = "affinity";
     el.redeConteudo.innerHTML = afinidade.render(id);
     if (!el.redeDialog.open) el.redeDialog.showModal();
+  }
+
+  function openDendrogram(forceSelection = false) {
+    if (!dendrograma?.available || !el.dendrogramaDialog) {
+      showToast("Agrupamento indisponível");
+      return;
+    }
+    const manual = selectedRecords();
+    const useSelection = forceSelection;
+    const records = useSelection ? manual : resultados;
+    if (records.length < 2) {
+      showToast(useSelection ? "Selecione pelo menos dois documentos" : "O filtro precisa retornar pelo menos dois documentos");
+      return;
+    }
+    document.querySelectorAll("dialog[open]").forEach(dialog => dialog.close());
+    el.dendrogramaDialog.showModal();
+    const state = stateFromControls();
+    const filtered = state.q || state.assunto || state.subassunto || state.tipo || state.publicacao || state.ano || state.qualidade || colecaoAtiva;
+    const sourceLabel = useSelection ? "Seleção manual" : filtered ? "Filtro atual" : "Catálogo completo";
+    dendrograma.mount(el.dendrogramaConteudo, records, { sourceLabel });
   }
 
   function updateDetailCitation(formatName) {
@@ -484,6 +652,7 @@
   }
 
   function initialize() {
+    colecaoAtiva = null;
     fillSelect(el.assunto, uniqueSorted(catalogo.map(item => item.assunto)), "Todos os assuntos");
     fillSelect(el.tipo, uniqueSorted(catalogo.map(item => item.tipo)), "Todos os tipos");
     fillSelect(el.publicacao, uniqueSorted(catalogo.map(item => item.publicacao)), "Todas as publicações");
@@ -569,6 +738,8 @@
     downloadText(exportText(records, formatName), batchFilename(formatName), formatName);
     showToast("Arquivo bibliográfico criado");
   });
+  el.abrirDendrograma.addEventListener("click", () => openDendrogram(false));
+  el.dendrogramaSelecao.addEventListener("click", () => openDendrogram(true));
   el.fechar.addEventListener("click", () => el.dialog.close());
   el.dialog.addEventListener("click", event => {
     if (event.target === el.dialog) el.dialog.close();
@@ -576,6 +747,10 @@
   el.fecharRede.addEventListener("click", () => el.redeDialog.close());
   el.redeDialog.addEventListener("click", event => {
     if (event.target === el.redeDialog) el.redeDialog.close();
+  });
+  el.fecharDendrograma.addEventListener("click", () => el.dendrogramaDialog.close());
+  el.dendrogramaDialog.addEventListener("click", event => {
+    if (event.target === el.dendrogramaDialog) el.dendrogramaDialog.close();
   });
 
   document.addEventListener("click", event => {
@@ -599,6 +774,7 @@
       if (field === "publicacao") el.publicacao.value = "";
       if (field === "ano") el.ano.value = "";
       if (field === "qualidade") el.qualidade.value = "";
+      if (field === "colecao") colecaoAtiva = null;
       render(true);
     }
 
@@ -612,6 +788,19 @@
 
     const affinityOpen = event.target.closest("[data-open-affinity]");
     if (affinityOpen) openAffinity(affinityOpen.dataset.openAffinity);
+
+    const familyFilter = event.target.closest("[data-family-filter]");
+    if (familyFilter) {
+      const context = dendrograma?.context?.(familyFilter.dataset.familyFilter);
+      if (context?.status === "grouped") {
+        document.dispatchEvent(new CustomEvent("catalogo:apply-cluster", {
+          detail: {
+            ids: context.ids,
+            label: `${context.code} · ${context.title}`,
+          },
+        }));
+      }
+    }
 
     const networkNode = event.target.closest("[data-network-node]");
     if (networkNode && el.redeDialog.open) {
@@ -663,6 +852,28 @@
     el.qualidade.value = event.detail?.value || "";
     render(true);
     document.querySelector("#resultados").scrollIntoView({ behavior: "smooth" });
+  });
+
+  document.addEventListener("catalogo:open-details", event => {
+    const id = event.detail?.id;
+    if (!id) return;
+    if (el.dendrogramaDialog.open) el.dendrogramaDialog.close();
+    openDetails(id);
+  });
+
+  document.addEventListener("catalogo:apply-cluster", event => {
+    const ids = Array.isArray(event.detail?.ids) ? event.detail.ids : [];
+    if (!ids.length) return;
+    colecaoAtiva = {
+      ids: new Set(ids),
+      label: event.detail?.label || "Agrupamento local",
+    };
+    if (el.dendrogramaDialog.open) el.dendrogramaDialog.close();
+    if (el.dialog.open) el.dialog.close();
+    if (el.redeDialog.open) el.redeDialog.close();
+    render(true);
+    document.querySelector("#resultados").scrollIntoView({ behavior: "smooth" });
+    showToast(`${ids.length} ${ids.length === 1 ? "documento exibido" : "documentos exibidos"}`);
   });
 
   document.addEventListener("keydown", event => {
