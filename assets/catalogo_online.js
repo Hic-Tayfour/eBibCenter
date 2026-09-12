@@ -12,6 +12,9 @@
   let limite = pageSize;
   let resultados = [];
   let colecaoAtiva = null;
+  let layoutMode = "grid";
+  let selectionMode = false;
+  let activeView = "biblioteca";
   const selecionados = new Set();
   let toastTimer;
 
@@ -41,6 +44,8 @@
     copiarSelecao: document.querySelector("#copiar-selecao"),
     baixarSelecao: document.querySelector("#baixar-selecao"),
     limparSelecao: document.querySelector("#limpar-selecao"),
+    compararSelecao: document.querySelector("#comparar-selecao"),
+    toggleSelectionMode: document.querySelector("#toggle-selection-mode"),
     dendrogramaSelecao: document.querySelector("#dendrograma-selecao"),
     abrirDendrograma: document.querySelector("#abrir-dendrograma"),
     dendrogramaDialog: document.querySelector("#dendrograma-afinidade"),
@@ -49,6 +54,17 @@
     redeDialog: document.querySelector("#rede-bibliografica"),
     redeConteudo: document.querySelector("#rede-conteudo"),
     fecharRede: document.querySelector("#fechar-rede"),
+    bibliotecaView: document.querySelector("#biblioteca-view"),
+    colecoesView: document.querySelector("#colecoes-view"),
+    colecoesPage: document.querySelector("#colecoes-page"),
+    relacoesView: document.querySelector("#relacoes-view"),
+    relacoesDocumento: document.querySelector("#relacoes-documento"),
+    relacoesResumo: document.querySelector("#relacoes-resumo"),
+    qualidadeView: document.querySelector("#qualidade-view"),
+    qualidadePage: document.querySelector("#qualidade-page"),
+    comparacaoDialog: document.querySelector("#comparacao-documentos"),
+    comparacaoConteudo: document.querySelector("#comparacao-conteudo"),
+    fecharComparacao: document.querySelector("#fechar-comparacao"),
   };
 
   function normalize(value) {
@@ -156,10 +172,18 @@
     }
   }
 
-  function fillSelect(select, values, label) {
+  function countsBy(records, field) {
+    return records.reduce((counts, record) => {
+      const value = record[field];
+      if (value) counts.set(value, (counts.get(value) || 0) + 1);
+      return counts;
+    }, new Map());
+  }
+
+  function fillSelect(select, values, label, counts = null) {
     const current = select.value;
     select.innerHTML = `<option value="">${label}</option>` + values
-      .map(value => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`)
+      .map(value => `<option value="${escapeHtml(value)}">${escapeHtml(value)}${counts ? ` (${counts.get(value) || 0})` : ""}</option>`)
       .join("");
     if (values.includes(current)) select.value = current;
   }
@@ -172,7 +196,8 @@
     fillSelect(
       el.subassunto,
       uniqueSorted(source.map(item => item.subassunto)),
-      "Todos os subassuntos"
+      "Todos os subassuntos",
+      countsBy(source, "subassunto")
     );
   }
 
@@ -215,10 +240,6 @@
 
   function cardMarkup(record) {
     const authors = record.autores?.length ? record.autores.join("; ") : "Autoria não identificada";
-    const bib = qualidade?.bibStatus(record) || {
-      code: record.bibIncompleto?.length ? "pendente" : "estrutural",
-      label: record.bibIncompleto?.length ? "Bib pendente" : "Completo não verificado",
-    };
     return `
       <article class="book-card ${selecionados.has(record.id) ? "book-card--selected" : ""}">
         <label class="book-card__select">
@@ -232,12 +253,31 @@
             <h3>${escapeHtml(record.titulo)}</h3>
             <p class="book-card__authors">${escapeHtml(authors)}</p>
             <div class="book-card__footer">
-              <span>${escapeHtml(record.tipo)}${record.paginas ? ` · ${record.paginas} p.` : ""}</span>
-              <span class="bib-state bib-state--${escapeHtml(bib.code)}">${escapeHtml(bib.label)}</span>
+              <span>${escapeHtml(record.tipo)}${record.ano ? ` · ${escapeHtml(record.ano)}` : ""}${record.paginas ? ` · ${record.paginas} p.` : ""}</span>
+              <span class="book-card__publication">${escapeHtml(record.publicacao || "Publicação não identificada")}</span>
             </div>
           </div>
         </button>
       </article>`;
+  }
+
+  function tableMarkup(records) {
+    return `
+      <div class="catalog-table-wrap">
+        <table class="catalog-table">
+          <thead><tr><th class="catalog-table__select">Selecionar</th><th>Título</th><th>Autoria</th><th>Ano</th><th>Publicação</th><th>Tipo</th><th>Assunto</th></tr></thead>
+          <tbody>${records.map(record => `
+            <tr class="${selecionados.has(record.id) ? "catalog-table__row--selected" : ""}">
+              <td class="catalog-table__select"><input type="checkbox" data-select="${escapeHtml(record.id)}" aria-label="Selecionar ${escapeHtml(record.titulo)}" ${selecionados.has(record.id) ? "checked" : ""}></td>
+              <td><button type="button" data-open="${escapeHtml(record.id)}">${escapeHtml(record.titulo)}</button></td>
+              <td>${escapeHtml((record.autores || []).join("; ") || "Não identificada")}</td>
+              <td>${escapeHtml(record.ano || "—")}</td>
+              <td>${escapeHtml(record.publicacao || "—")}</td>
+              <td>${escapeHtml(record.tipo || "—")}</td>
+              <td>${escapeHtml(record.assunto || "—")}</td>
+            </tr>`).join("")}</tbody>
+        </table>
+      </div>`;
   }
 
   function activeFiltersMarkup(state) {
@@ -261,7 +301,8 @@
     const state = stateFromControls();
     resultados = filterRecords(state);
     const visible = resultados.slice(0, limite);
-    el.grade.innerHTML = visible.map(cardMarkup).join("");
+    el.grade.className = `catalog-grid catalog-grid--${layoutMode}`;
+    el.grade.innerHTML = layoutMode === "table" ? tableMarkup(visible) : visible.map(cardMarkup).join("");
     el.vazio.hidden = resultados.length > 0;
     el.grade.hidden = resultados.length === 0;
     el.mais.hidden = resultados.length <= limite;
@@ -300,8 +341,14 @@
 
   function updateSelectionBar() {
     const count = selecionados.size;
-    el.exportacao.hidden = count === 0;
+    el.exportacao.hidden = !selectionMode;
     el.selecaoContagem.textContent = `${count} ${count === 1 ? "documento selecionado" : "documentos selecionados"}`;
+    el.compararSelecao.disabled = count < 2 || count > 4;
+    el.copiarSelecao.disabled = count === 0;
+    el.baixarSelecao.disabled = count === 0;
+    document.body.classList.toggle("selection-mode", selectionMode);
+    el.toggleSelectionMode.setAttribute("aria-pressed", String(selectionMode));
+    el.toggleSelectionMode.textContent = selectionMode ? "Encerrar seleção" : "Selecionar";
   }
 
   function exportText(records, formatName) {
@@ -358,9 +405,13 @@
     const eprint = bibField(record, "eprint");
     const url = safeExternalUrl(bibField(record, "url"));
     const rows = [
-      ["Ano", escapeHtml(record.ano || "Não identificado")],
+      ["Ano", record.ano
+        ? `<button class="metadata-filter" type="button" data-filter-year="${escapeHtml(record.ano)}">${escapeHtml(record.ano)}</button>`
+        : "Não identificado"],
       ["Páginas", record.paginas ?? "Não disponível"],
-      ["Publicação", escapeHtml(record.publicacao || "Não identificada no BibTeX")],
+      ["Publicação", record.publicacao
+        ? `<button class="metadata-filter" type="button" data-filter-publication="${escapeHtml(record.publicacao)}">${escapeHtml(record.publicacao)}</button>`
+        : "Não identificada no BibTeX"],
     ];
     if (edition) rows.push(["Edição", escapeHtml(edition)]);
     if (volume || number) rows.push(["Volume / número", escapeHtml([volume, number].filter(Boolean).join(" / "))]);
@@ -456,6 +507,11 @@
       : affinity.traceable
         ? "A bibliografia foi rastreada, mas não houve sobreposição suficiente com outras obras da base."
         : "Nenhuma relação por citações foi confirmada e a afinidade por referências não pôde ser calculada.";
+    const sequence = resultados.length ? resultados : catalogo;
+    const position = sequence.findIndex(item => item.id === record.id);
+    const previous = position > 0 ? sequence[position - 1] : null;
+    const next = position >= 0 && position < sequence.length - 1 ? sequence[position + 1] : null;
+    const abstract = record.resumo || record.abstract || "";
     return `
       <article class="detail">
         <div class="detail__visual">
@@ -467,86 +523,122 @@
         <div class="detail__content">
           <p class="eyebrow">${escapeHtml(record.assunto)} · ${escapeHtml(record.subassunto)}</p>
           <h2>${escapeHtml(record.titulo)}</h2>
-          <p class="detail__authors">${escapeHtml(authors)}</p>
+          <p class="detail__authors">${record.autores?.length
+            ? record.autores.map(author => `<button type="button" data-filter-author="${escapeHtml(author)}">${escapeHtml(author)}</button>`).join("; ")
+            : escapeHtml(authors)}</p>
           <div class="detail__chips">
             <button class="meta-chip" type="button" data-filter-subject="${escapeHtml(record.assunto)}">${escapeHtml(record.assunto)}</button>
             <button class="meta-chip" type="button" data-filter-subsubject="${escapeHtml(record.subassunto)}">${escapeHtml(record.subassunto)}</button>
             <span class="meta-chip">${escapeHtml(record.tipo)}</span>
             <span class="meta-chip bib-state bib-state--${escapeHtml(bib.code)}">${escapeHtml(bib.label)}</span>
           </div>
-          <section class="detail-section detail-section--metadata" aria-labelledby="metadata-title">
-            <div class="detail-section__heading">
-              <p class="eyebrow">Ficha catalográfica</p>
-              <h3 id="metadata-title">Identificação bibliográfica</h3>
-            </div>
-            <dl class="metadata">${bibliographicRows(record)}</dl>
-          </section>
-          <details class="file-details">
-            <summary>Arquivo, localização e tags</summary>
-            <dl class="metadata metadata--technical">
-              <dt>Arquivo</dt><dd>${escapeHtml(record.nomeArquivo)}</dd>
-              <dt>Tags</dt><dd>${escapeHtml((record.tags || []).join(", ") || "Sem tags")}</dd>
-            </dl>
-          </details>
-          <div class="detail__actions"><span class="quality-inline">PDFs e notas ficam disponíveis apenas na biblioteca local.</span></div>
-          ${qualityIssues.length ? `<p class="quality-inline"><strong>Revisar:</strong> ${qualityIssues.map(issue => escapeHtml(qualidade.label(issue))).join(" · ")}</p>` : ""}
-          ${loadingContextMarkup()}
-          ${hasNetworkRelations || hasAffinityRelations ? `
-            <section class="detail-section relations-section" aria-labelledby="relations-title">
+          <div class="detail-navigation" aria-label="Navegação entre documentos">
+            <button type="button" data-detail-prev="${escapeHtml(previous?.id || "")}" ${previous ? "" : "disabled"}>← Anterior</button>
+            <span>${position >= 0 ? position + 1 : 1} de ${sequence.length}</span>
+            <button type="button" data-detail-next="${escapeHtml(next?.id || "")}" ${next ? "" : "disabled"}>Próximo →</button>
+            <button type="button" data-copy-link>Copiar link</button>
+          </div>
+          <div class="detail-tabs" role="tablist" aria-label="Seções da ficha">
+            <button type="button" role="tab" data-detail-tab="ficha" aria-selected="true">Ficha</button>
+            <button type="button" role="tab" data-detail-tab="relacoes" aria-selected="false">Relacionados</button>
+            <button type="button" role="tab" data-detail-tab="citacao" aria-selected="false">Citação</button>
+          </div>
+          <div class="detail-panel" data-detail-panel="ficha">
+            <section class="detail-section detail-section--metadata" aria-labelledby="metadata-title">
               <div class="detail-section__heading">
-                <p class="eyebrow">Evidência bibliográfica</p>
-                <h3 id="relations-title">Relações confirmadas</h3>
+                <p class="eyebrow">Ficha catalográfica</p>
+                <h3 id="metadata-title">Identificação bibliográfica</h3>
               </div>
-              <div class="relations-grid">
-                ${hasNetworkRelations ? `
-                  <article class="network-summary" aria-labelledby="network-summary-title">
-                    <div>
-                      <p class="eyebrow">Citações locais diretas · ${escapeHtml(networkScope)}</p>
-                      <h3 id="network-summary-title">Relações bibliográficas</h3>
-                      ${networkBibliography ? `<p>${escapeHtml(networkBibliography)}</p>` : ""}
-                      <p>${network.cited} ${network.cited === 1 ? "obra da base citada" : "obras da base citadas"} · ${network.citedBy} ${network.citedBy === 1 ? "obra da base cita" : "obras da base citam"} esta fonte</p>
-                    </div>
-                    <button class="button" type="button" data-open-network="${escapeHtml(record.id)}">Explorar citações</button>
-                  </article>` : ""}
-                ${hasAffinityRelations ? `
-                  <article class="network-summary network-summary--affinity" aria-labelledby="affinity-summary-title">
-                    <div>
-                      <p class="eyebrow">Referências compartilhadas</p>
-                      <h3 id="affinity-summary-title">Mapa de afinidade</h3>
-                      <p>${escapeHtml(affinityDescription)}</p>
-                    </div>
-                    <button class="button" type="button" data-open-affinity="${escapeHtml(record.id)}">Explorar afinidades</button>
-                  </article>` : ""}
+              <dl class="metadata">${bibliographicRows(record)}</dl>
+            </section>
+            ${abstract ? `<section class="detail-section detail-abstract"><div class="detail-section__heading"><p class="eyebrow">Conteúdo</p><h3>Resumo</h3></div><p>${escapeHtml(abstract)}</p></section>` : ""}
+            <details class="file-details">
+              <summary>Arquivo, localização e tags</summary>
+              <dl class="metadata metadata--technical">
+                <dt>Arquivo</dt><dd>${escapeHtml(record.nomeArquivo)}</dd>
+                <dt>Tags</dt><dd>${escapeHtml((record.tags || []).join(", ") || "Sem tags")}</dd>
+              </dl>
+            </details>
+            <div class="detail__actions"><span class="quality-inline">PDFs e notas ficam disponíveis apenas na biblioteca local.</span></div>
+            ${qualityIssues.length ? `<p class="quality-inline"><strong>Revisar:</strong> ${qualityIssues.map(issue => escapeHtml(qualidade.label(issue))).join(" · ")}</p>` : ""}
+          </div>
+          <div class="detail-panel" data-detail-panel="relacoes" hidden>
+            ${loadingContextMarkup()}
+            ${hasNetworkRelations || hasAffinityRelations ? `
+              <section class="detail-section relations-section" aria-labelledby="relations-title">
+                <div class="detail-section__heading">
+                  <p class="eyebrow">Evidência bibliográfica</p>
+                  <h3 id="relations-title">Relações confirmadas</h3>
+                </div>
+                <div class="relations-grid">
+                  ${hasNetworkRelations ? `<article class="network-summary"><div><p class="eyebrow">Citações locais diretas · ${escapeHtml(networkScope)}</p><h3>Relações bibliográficas</h3>${networkBibliography ? `<p>${escapeHtml(networkBibliography)}</p>` : ""}<p>${network.cited} citadas · ${network.citedBy} citam esta fonte</p></div><button class="button" type="button" data-open-network="${escapeHtml(record.id)}">Explorar citações</button></article>` : ""}
+                  ${hasAffinityRelations ? `<article class="network-summary network-summary--affinity"><div><p class="eyebrow">Referências compartilhadas</p><h3>Mapa de afinidade</h3><p>${escapeHtml(affinityDescription)}</p></div><button class="button" type="button" data-open-affinity="${escapeHtml(record.id)}">Explorar afinidades</button></article>` : ""}
+                </div>
+              </section>` : `<aside class="relation-empty"><div class="relation-empty__mark" aria-hidden="true">↔</div><div><p class="eyebrow">Relações confirmadas</p><h3>Nenhuma conexão local disponível</h3><p>${escapeHtml(relationEmptyMessage)}</p></div></aside>`}
+          </div>
+          <div class="detail-panel" data-detail-panel="citacao" hidden>
+            <div class="bib-heading">
+              <div>
+                <h3 data-citation-title>Referência em BibTeX</h3>
+                <p class="bib-source">${escapeHtml(bib.label)} · ${escapeHtml(bib.detail || record.bibFonte || "metadados do catálogo")}${record.bibId ? ` · ${escapeHtml(record.bibId)}` : ""}</p>
               </div>
-            </section>` : `
-            <aside class="relation-empty">
-              <div class="relation-empty__mark" aria-hidden="true">↔</div>
-              <div><p class="eyebrow">Relações confirmadas</p><h3>Nenhuma conexão local disponível</h3><p>${escapeHtml(relationEmptyMessage)}</p></div>
-            </aside>`}
-          <div class="bib-heading">
-            <div>
-              <h3 data-citation-title>Referência em BibTeX</h3>
-              <p class="bib-source">${escapeHtml(bib.label)} · ${escapeHtml(bib.detail || record.bibFonte || "metadados do catálogo")}${record.bibId ? ` · ${escapeHtml(record.bibId)}` : ""}</p>
             </div>
+            <div class="citation-toolbar">
+              <div class="citation-formats" role="group" aria-label="Formato da referência">
+                <button type="button" data-citation-format="bibtex" aria-pressed="true">BibTeX</button>
+                <button type="button" data-citation-format="apa" aria-pressed="false">APA</button>
+                <button type="button" data-citation-format="abnt" aria-pressed="false">ABNT</button>
+              </div>
+              <div class="citation-actions">
+                <button class="copy-button" type="button" data-copy-citation>Copiar</button>
+                <button class="copy-button" type="button" data-download-citation>Baixar</button>
+              </div>
+            </div>
+            <pre class="bibtex"><code data-citation-output>${escapeHtml(citacoes.format(record, "bibtex"))}</code></pre>
+            ${missing.length ? `<p class="bib-warning">Registro mínimo. Campos ainda ausentes: ${escapeHtml(missing.join(", "))}.</p>` : ""}
           </div>
-          <div class="citation-toolbar">
-            <div class="citation-formats" role="group" aria-label="Formato da referência">
-              <button type="button" data-citation-format="bibtex" aria-pressed="true">BibTeX</button>
-              <button type="button" data-citation-format="apa" aria-pressed="false">APA</button>
-              <button type="button" data-citation-format="abnt" aria-pressed="false">ABNT</button>
-            </div>
-            <div class="citation-actions">
-              <button class="copy-button" type="button" data-copy-citation>Copiar</button>
-              <button class="copy-button" type="button" data-download-citation>Baixar</button>
-            </div>
-          </div>
-          <pre class="bibtex"><code data-citation-output>${escapeHtml(citacoes.format(record, "bibtex"))}</code></pre>
-          ${missing.length ? `<p class="bib-warning">Registro mínimo. Campos ainda ausentes: ${escapeHtml(missing.join(", "))}.</p>` : ""}
         </div>
       </article>`;
   }
 
-  function openDetails(id) {
+  function documentLink(id) {
+    const url = new URL(location.href);
+    url.hash = `documento=${encodeURIComponent(id)}`;
+    return url.href;
+  }
+
+  function setDocumentHash(id) {
+    try {
+      history.replaceState(null, "", documentLink(id));
+    } catch {
+      // Páginas file:// podem limitar alterações no histórico.
+    }
+  }
+
+  function clearDocumentHash() {
+    if (!location.hash.startsWith("#documento=")) return;
+    try {
+      history.replaceState(null, "", `${location.pathname}${location.search}`);
+    } catch {
+      // Páginas file:// podem limitar alterações no histórico.
+    }
+  }
+
+  function closeDetails() {
+    if (el.dialog.open) el.dialog.close();
+    clearDocumentHash();
+  }
+
+  function switchDetailTab(name) {
+    el.conteudo.querySelectorAll("[data-detail-tab]").forEach(button => {
+      button.setAttribute("aria-selected", String(button.dataset.detailTab === name));
+    });
+    el.conteudo.querySelectorAll("[data-detail-panel]").forEach(panel => {
+      panel.hidden = panel.dataset.detailPanel !== name;
+    });
+  }
+
+  function openDetails(id, updateHash = true) {
     const record = catalogo.find(item => item.id === id);
     if (!record) return;
     document.querySelectorAll("dialog[open]").forEach(item => {
@@ -556,6 +648,7 @@
     el.dialog.dataset.current = id;
     el.dialog.dataset.citationFormat = "bibtex";
     if (!el.dialog.open) el.dialog.showModal();
+    if (updateHash) setDocumentHash(id);
     window.setTimeout(() => {
       if (el.dialog.dataset.current !== id) return;
       const target = el.conteudo.querySelector("[data-library-context]");
@@ -607,6 +700,112 @@
     dendrograma.mount(el.dendrogramaConteudo, records, { sourceLabel });
   }
 
+  function renderRelationsPage(id) {
+    const record = catalogo.find(item => item.id === id) || catalogo[0];
+    if (!record || !el.relacoesResumo) return;
+    const network = rede?.summary(record.id) || { cited: 0, citedBy: 0, total: 0 };
+    const affinitySummary = afinidade?.summary(record.id) || { traceable: false, references: 0, related: 0 };
+    const context = dendrograma?.context?.(record.id) || null;
+    const collection = context?.status === "grouped"
+      ? `${context.code} · ${context.title}`
+      : "Sem coleção confiável";
+    el.relacoesResumo.innerHTML = `
+      <article class="relations-focus">
+        <p class="eyebrow">Obra central</p>
+        <h3>${escapeHtml(record.titulo)}</h3>
+        <p>${escapeHtml((record.autores || []).join("; ") || "Autoria não identificada")}</p>
+        <button class="button button--quiet" type="button" data-open="${escapeHtml(record.id)}">Abrir ficha</button>
+      </article>
+      <div class="relation-type-grid">
+        <article class="relation-type relation-type--citation">
+          <span>Citação direta</span>
+          <strong>${network.total || 0}</strong>
+          <p>${network.cited || 0} citadas por esta obra · ${network.citedBy || 0} citam esta obra.</p>
+          ${network.total ? `<button class="button" type="button" data-open-network="${escapeHtml(record.id)}">Explorar citações</button>` : `<small>Nenhuma ligação direta confirmada na base local.</small>`}
+        </article>
+        <article class="relation-type relation-type--shared">
+          <span>Referências compartilhadas</span>
+          <strong>${affinitySummary.related || 0}</strong>
+          <p>${affinitySummary.traceable ? `${affinitySummary.references || 0} referências rastreadas nesta obra.` : "Bibliografia insuficiente para comparar."}</p>
+          ${affinitySummary.traceable && affinitySummary.related ? `<button class="button" type="button" data-open-affinity="${escapeHtml(record.id)}">Explorar afinidade</button>` : `<small>Sem sobreposição bibliográfica calculável.</small>`}
+        </article>
+        <article class="relation-type relation-type--metadata">
+          <span>Afinidade por metadados</span>
+          <strong>${context?.status === "grouped" ? `${Math.round(context.proximity * 100)}%` : "—"}</strong>
+          <p>${escapeHtml(collection)}</p>
+          ${context?.status === "grouped" ? `<button class="button button--quiet" type="button" data-family-filter="${escapeHtml(record.id)}">Ver coleção</button>` : `<small>Nenhum vínculo ultrapassou o limiar mínimo.</small>`}
+        </article>
+      </div>`;
+  }
+
+  function showAppView(view) {
+    activeView = ["biblioteca", "colecoes", "relacoes", "qualidade"].includes(view) ? view : "biblioteca";
+    const views = {
+      biblioteca: el.bibliotecaView,
+      colecoes: el.colecoesView,
+      relacoes: el.relacoesView,
+      qualidade: el.qualidadeView,
+    };
+    Object.entries(views).forEach(([name, target]) => {
+      if (target) target.hidden = name !== activeView;
+    });
+    document.querySelectorAll("[data-app-view]").forEach(button => {
+      button.setAttribute("aria-pressed", String(button.dataset.appView === activeView));
+    });
+    if (activeView === "colecoes" && dendrograma?.available && el.colecoesPage) {
+      const state = stateFromControls();
+      const filtered = state.q || state.assunto || state.subassunto || state.tipo || state.publicacao || state.ano || state.qualidade || colecaoAtiva;
+      const records = filtered ? resultados : catalogo;
+      if (records.length < 2) {
+        el.colecoesPage.innerHTML = `<header class="page-header"><p class="eyebrow">Organização por afinidade</p><h2>Coleções sugeridas</h2></header><div class="empty-state"><h3>O recorte atual não pode ser agrupado.</h3><p>São necessários pelo menos dois documentos. Amplie ou limpe os filtros da biblioteca.</p><button class="button" type="button" data-app-view="biblioteca">Voltar à biblioteca</button></div>`;
+      } else {
+        dendrograma.mount(el.colecoesPage, records, { sourceLabel: filtered ? "Filtro atual" : "Catálogo completo" });
+      }
+    }
+    if (activeView === "relacoes") renderRelationsPage(el.relacoesDocumento?.value);
+    if (activeView === "qualidade") qualidade?.renderInto?.(el.qualidadePage);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function comparisonMarkup(records) {
+    const rows = [
+      ["Título", record => record.titulo || "—"],
+      ["Autoria", record => (record.autores || []).join("; ") || "—"],
+      ["Ano", record => record.ano || "—"],
+      ["Publicação", record => record.publicacao || "—"],
+      ["Tipo", record => record.tipo || "—"],
+      ["Assunto", record => [record.assunto, record.subassunto].filter(Boolean).join(" · ") || "—"],
+      ["Páginas", record => record.paginas || "—"],
+      ["BibTeX", record => qualidade?.bibStatus(record).label || "—"],
+      ["Coleção sugerida", record => {
+        const context = dendrograma?.context?.(record.id);
+        return context?.status === "grouped" ? `${context.code} · ${context.title}` : "Sem coleção confiável";
+      }],
+    ];
+    return `
+      <header class="comparison-header">
+        <p class="eyebrow">Leitura lado a lado</p>
+        <h2>Comparar documentos</h2>
+        <p>${records.length} obras selecionadas. A comparação usa somente os dados disponíveis no catálogo local.</p>
+      </header>
+      <div class="comparison-table-wrap">
+        <table class="comparison-table">
+          <thead><tr><th>Campo</th>${records.map(record => `<th><button type="button" data-open="${escapeHtml(record.id)}">${escapeHtml(record.titulo)}</button></th>`).join("")}</tr></thead>
+          <tbody>${rows.map(([label, read]) => `<tr><th>${escapeHtml(label)}</th>${records.map(record => `<td>${escapeHtml(read(record))}</td>`).join("")}</tr>`).join("")}</tbody>
+        </table>
+      </div>`;
+  }
+
+  function openComparison() {
+    const records = selectedRecords();
+    if (records.length < 2 || records.length > 4) {
+      showToast("Selecione de 2 a 4 documentos para comparar");
+      return;
+    }
+    el.comparacaoConteudo.innerHTML = comparisonMarkup(records);
+    if (!el.comparacaoDialog.open) el.comparacaoDialog.showModal();
+  }
+
   function updateDetailCitation(formatName) {
     const record = catalogo.find(item => item.id === el.dialog.dataset.current);
     if (!record) return;
@@ -620,6 +819,8 @@
 
   function applyDetailFilter(field, value) {
     el.dialog.close();
+    clearDocumentHash();
+    showAppView("biblioteca");
     if (field === "assunto") {
       el.assunto.value = value;
       updateSubsubjects();
@@ -653,13 +854,11 @@
 
   function initialize() {
     colecaoAtiva = null;
-    fillSelect(el.assunto, uniqueSorted(catalogo.map(item => item.assunto)), "Todos os assuntos");
-    fillSelect(el.tipo, uniqueSorted(catalogo.map(item => item.tipo)), "Todos os tipos");
-    fillSelect(el.publicacao, uniqueSorted(catalogo.map(item => item.publicacao)), "Todas as publicações");
-    fillSelect(el.ano, uniqueSorted(catalogo.map(item => item.ano)).sort((a, b) => b.localeCompare(a)), "Todos os anos");
-    fillSelect(
-      el.qualidade,
-      [
+    fillSelect(el.assunto, uniqueSorted(catalogo.map(item => item.assunto)), "Todos os assuntos", countsBy(catalogo, "assunto"));
+    fillSelect(el.tipo, uniqueSorted(catalogo.map(item => item.tipo)), "Todos os tipos", countsBy(catalogo, "tipo"));
+    fillSelect(el.publicacao, uniqueSorted(catalogo.map(item => item.publicacao)), "Todas as publicações", countsBy(catalogo, "publicacao"));
+    fillSelect(el.ano, uniqueSorted(catalogo.map(item => item.ano)).sort((a, b) => b.localeCompare(a)), "Todos os anos", countsBy(catalogo, "ano"));
+    const qualityValues = [
         "bib-verificado",
         "bib-estrutural",
         "bib-pendente",
@@ -669,12 +868,22 @@
         "metadados-pendentes",
         "referencias-nao-detectadas",
         "afinidade-nao-calculavel",
-      ],
-      "Todos os estados"
-    );
+        "duplicata-provavel",
+      ];
+    const qualityCounts = new Map(qualityValues.map(code => [
+      code,
+      catalogo.filter(record => qualidade?.matches(record, code)).length,
+    ]));
+    fillSelect(el.qualidade, qualityValues, "Todos os estados", qualityCounts);
     [...el.qualidade.options].forEach(option => {
-      if (option.value) option.textContent = qualidade?.label(option.value) || option.value;
+      if (option.value) option.textContent = `${qualidade?.label(option.value) || option.value} (${qualityCounts.get(option.value) || 0})`;
     });
+    if (el.relacoesDocumento) {
+      el.relacoesDocumento.innerHTML = [...catalogo]
+        .sort((a, b) => a.titulo.localeCompare(b.titulo, "pt-BR", { sensitivity: "base" }))
+        .map(record => `<option value="${escapeHtml(record.id)}">${escapeHtml(record.titulo)}</option>`)
+        .join("");
+    }
 
     const state = stateFromUrl();
     el.busca.value = state.q;
@@ -693,6 +902,12 @@
       ? `Atualizado em ${new Date(meta.geradoEm).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}`
       : "Dados locais";
     render(true);
+    const documentId = location.hash.startsWith("#documento=")
+      ? decodeURIComponent(location.hash.slice("#documento=".length))
+      : "";
+    if (documentId && catalogo.some(record => record.id === documentId)) {
+      window.setTimeout(() => openDetails(documentId, false), 0);
+    }
   }
 
   let debounce;
@@ -738,12 +953,23 @@
     downloadText(exportText(records, formatName), batchFilename(formatName), formatName);
     showToast("Arquivo bibliográfico criado");
   });
-  el.abrirDendrograma.addEventListener("click", () => openDendrogram(false));
-  el.dendrogramaSelecao.addEventListener("click", () => openDendrogram(true));
-  el.fechar.addEventListener("click", () => el.dialog.close());
-  el.dialog.addEventListener("click", event => {
-    if (event.target === el.dialog) el.dialog.close();
+  el.relacoesDocumento?.addEventListener("change", () => renderRelationsPage(el.relacoesDocumento.value));
+  el.toggleSelectionMode.addEventListener("click", () => {
+    selectionMode = !selectionMode;
+    if (!selectionMode) selecionados.clear();
+    render(false);
   });
+  el.compararSelecao.addEventListener("click", openComparison);
+  el.fecharComparacao?.addEventListener("click", () => el.comparacaoDialog.close());
+  el.comparacaoDialog?.addEventListener("click", event => {
+    if (event.target === el.comparacaoDialog) el.comparacaoDialog.close();
+  });
+  el.dendrogramaSelecao.addEventListener("click", () => openDendrogram(true));
+  el.fechar.addEventListener("click", closeDetails);
+  el.dialog.addEventListener("click", event => {
+    if (event.target === el.dialog) closeDetails();
+  });
+  el.dialog.addEventListener("close", clearDocumentHash);
   el.fecharRede.addEventListener("click", () => el.redeDialog.close());
   el.redeDialog.addEventListener("click", event => {
     if (event.target === el.redeDialog) el.redeDialog.close();
@@ -754,8 +980,30 @@
   });
 
   document.addEventListener("click", event => {
+    const appView = event.target.closest("[data-app-view]");
+    if (appView) showAppView(appView.dataset.appView);
+
+    const layout = event.target.closest("[data-layout]");
+    if (layout) {
+      layoutMode = layout.dataset.layout;
+      document.querySelectorAll("[data-layout]").forEach(button => {
+        button.setAttribute("aria-pressed", String(button === layout));
+      });
+      render(false);
+    }
+
     const open = event.target.closest("[data-open]");
     if (open) openDetails(open.dataset.open);
+
+    const detailTab = event.target.closest("[data-detail-tab]");
+    if (detailTab) switchDetailTab(detailTab.dataset.detailTab);
+    const previous = event.target.closest("[data-detail-prev]");
+    if (previous?.dataset.detailPrev) openDetails(previous.dataset.detailPrev);
+    const next = event.target.closest("[data-detail-next]");
+    if (next?.dataset.detailNext) openDetails(next.dataset.detailNext);
+    if (event.target.closest("[data-copy-link]") && el.dialog.dataset.current) {
+      copyText(documentLink(el.dialog.dataset.current), "Link da ficha copiado");
+    }
 
     const clear = event.target.closest("[data-clear]");
     if (clear) clearAll();
@@ -782,6 +1030,38 @@
     if (subject) applyDetailFilter("assunto", subject.dataset.filterSubject);
     const subsubject = event.target.closest("[data-filter-subsubject]");
     if (subsubject) applyDetailFilter("subassunto", subsubject.dataset.filterSubsubject);
+    const publication = event.target.closest("[data-filter-publication]");
+    if (publication) {
+      el.dialog.close();
+      showAppView("biblioteca");
+      el.publicacao.value = publication.dataset.filterPublication;
+      render(true);
+      document.querySelector("#resultados").scrollIntoView({ behavior: "smooth" });
+    }
+    const year = event.target.closest("[data-filter-year]");
+    if (year) {
+      el.dialog.close();
+      showAppView("biblioteca");
+      el.ano.value = year.dataset.filterYear;
+      render(true);
+      document.querySelector("#resultados").scrollIntoView({ behavior: "smooth" });
+    }
+    const author = event.target.closest("[data-filter-author]");
+    if (author) {
+      el.dialog.close();
+      showAppView("biblioteca");
+      el.busca.value = `autor:"${author.dataset.filterAuthor}"`;
+      render(true);
+      document.querySelector("#resultados").scrollIntoView({ behavior: "smooth" });
+    }
+
+    const qualityFilter = event.target.closest("[data-quality-filter]");
+    if (qualityFilter && qualityFilter.closest("#qualidade-page")) {
+      showAppView("biblioteca");
+      el.qualidade.value = qualityFilter.dataset.qualityFilter;
+      render(true);
+      document.querySelector("#resultados").scrollIntoView({ behavior: "smooth" });
+    }
 
     const networkOpen = event.target.closest("[data-open-network]");
     if (networkOpen) openNetwork(networkOpen.dataset.openNetwork);
@@ -842,13 +1122,16 @@
   document.addEventListener("change", event => {
     const checkbox = event.target.closest("[data-select]");
     if (!checkbox) return;
+    selectionMode = true;
     if (checkbox.checked) selecionados.add(checkbox.dataset.select);
     else selecionados.delete(checkbox.dataset.select);
     checkbox.closest(".book-card")?.classList.toggle("book-card--selected", checkbox.checked);
+    checkbox.closest("tr")?.classList.toggle("catalog-table__row--selected", checkbox.checked);
     updateSelectionBar();
   });
 
   document.addEventListener("catalogo:quality-filter", event => {
+    showAppView("biblioteca");
     el.qualidade.value = event.detail?.value || "";
     render(true);
     document.querySelector("#resultados").scrollIntoView({ behavior: "smooth" });
@@ -871,9 +1154,26 @@
     if (el.dendrogramaDialog.open) el.dendrogramaDialog.close();
     if (el.dialog.open) el.dialog.close();
     if (el.redeDialog.open) el.redeDialog.close();
+    showAppView("biblioteca");
     render(true);
     document.querySelector("#resultados").scrollIntoView({ behavior: "smooth" });
     showToast(`${ids.length} ${ids.length === 1 ? "documento exibido" : "documentos exibidos"}`);
+  });
+
+  document.addEventListener("catalogo:select-cluster", event => {
+    const ids = Array.isArray(event.detail?.ids) ? event.detail.ids : [];
+    if (!ids.length) return;
+    selecionados.clear();
+    ids.forEach(id => selecionados.add(id));
+    selectionMode = true;
+    colecaoAtiva = {
+      ids: new Set(ids),
+      label: event.detail?.label || "Coleção sugerida",
+    };
+    showAppView("biblioteca");
+    render(true);
+    document.querySelector("#resultados").scrollIntoView({ behavior: "smooth" });
+    showToast(`${ids.length} documentos selecionados`);
   });
 
   document.addEventListener("keydown", event => {

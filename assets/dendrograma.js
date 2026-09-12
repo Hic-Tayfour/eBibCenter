@@ -579,7 +579,10 @@
           ${examples.map(record => `<li><button type="button" data-cluster-open="${escapeHtml(record.id)}">${escapeHtml(record.titulo)}</button></li>`).join("")}
           ${extra > 0 ? `<li class="affinity-collection__extra">+ ${extra} ${extra === 1 ? "obra" : "obras"}</li>` : ""}
         </ul>
-        <button class="button affinity-collection__apply" type="button" data-cluster-apply="${collection.code}">Ver no catálogo</button>
+        <div class="affinity-collection__actions">
+          <button class="button affinity-collection__apply" type="button" data-cluster-apply="${collection.code}">Ver no catálogo</button>
+          <button class="button button--quiet" type="button" data-cluster-select="${collection.code}">Selecionar coleção</button>
+        </div>
       </article>`;
   }
 
@@ -845,6 +848,18 @@
             const collection = analysis.collections.find(item => item.code === apply.dataset.clusterApply);
             if (!collection) return;
             document.dispatchEvent(new CustomEvent("catalogo:apply-cluster", {
+              detail: {
+                ids: collection.leaves.map(index => model.records[index].id),
+                label: `${collection.code} · ${collection.title}`,
+              },
+            }));
+            return;
+          }
+          const select = event.target.closest("[data-cluster-select]");
+          if (select) {
+            const collection = analysis.collections.find(item => item.code === select.dataset.clusterSelect);
+            if (!collection) return;
+            document.dispatchEvent(new CustomEvent("catalogo:select-cluster", {
               detail: {
                 ids: collection.leaves.map(index => model.records[index].id),
                 label: `${collection.code} · ${collection.title}`,

@@ -33,15 +33,24 @@
           <span id="atualizado-em">Atualizando...</span>
         </div>
         <div class="masthead__tools" aria-label="Ferramentas da biblioteca">
-          <button id="abrir-dendrograma" type="button">Coleções sugeridas</button>
           <span class="eyebrow">Versão online · PDFs não publicados</span>
-          <button id="abrir-qualidade" type="button">Qualidade e revisão</button>
         </div>
       </div>
     </div>
   </header>
 
+  <nav class="primary-nav" aria-label="Áreas do eBibCenter">
+    <div class="primary-nav__inner">
+      <button type="button" data-app-view="biblioteca" aria-pressed="true">Biblioteca</button>
+      <button id="abrir-dendrograma" type="button" data-app-view="colecoes" aria-pressed="false">Coleções</button>
+      <button id="abrir-relacoes" type="button" data-app-view="relacoes" aria-pressed="false">Relações</button>
+      <button id="abrir-qualidade" type="button" data-app-view="qualidade" aria-pressed="false">Qualidade</button>
+    </div>
+  </nav>
+
   <main>
+    <div id="biblioteca-view" class="app-view">
+      <div class="library-layout">
     <section class="query-panel" aria-labelledby="consulta-titulo">
       <div class="section-heading">
         <span class="section-number">1</span>
@@ -121,8 +130,17 @@
             <p id="resultado-contagem" aria-live="polite">Carregando catálogo...</p>
           </div>
         </div>
-        <div id="filtros-ativos" class="active-filters" aria-label="Filtros ativos"></div>
+        <div class="results-header__tools">
+          <div class="view-switcher" role="group" aria-label="Visualização dos documentos">
+            <button type="button" data-layout="grid" aria-pressed="true">Grade</button>
+            <button type="button" data-layout="list" aria-pressed="false">Lista</button>
+            <button type="button" data-layout="table" aria-pressed="false">Tabela</button>
+          </div>
+          <button id="toggle-selection-mode" class="button button--quiet" type="button" aria-pressed="false">Selecionar</button>
+        </div>
       </div>
+
+      <div id="filtros-ativos" class="active-filters" aria-label="Filtros ativos"></div>
 
       <div id="barra-exportacao" class="selection-bar" aria-label="Exportação bibliográfica em lote" hidden>
         <div class="selection-bar__summary">
@@ -139,6 +157,7 @@
         </label>
         <div class="selection-bar__actions">
           <button id="dendrograma-selecao" type="button">Agrupar seleção</button>
+          <button id="comparar-selecao" type="button">Comparar</button>
           <button id="copiar-selecao" type="button">Copiar</button>
           <button id="baixar-selecao" type="button">Baixar arquivo</button>
           <button id="limpar-selecao" type="button">Limpar seleção</button>
@@ -155,6 +174,34 @@
       </div>
 
       <button id="carregar-mais" class="button button--more" type="button" hidden>Carregar mais</button>
+    </section>
+      </div>
+    </div>
+
+    <section id="colecoes-view" class="app-view page-view" aria-labelledby="colecoes-page-title" hidden>
+      <div id="colecoes-page"></div>
+    </section>
+
+    <section id="relacoes-view" class="app-view page-view" aria-labelledby="relacoes-page-title" hidden>
+      <header class="page-header">
+        <p class="eyebrow">Exploração bibliográfica</p>
+        <h2 id="relacoes-page-title">Relações</h2>
+        <p>Escolha uma obra para separar citações diretas, referências compartilhadas e proximidade temática.</p>
+      </header>
+      <div class="relations-legend" aria-label="Tipos de relação">
+        <span class="relations-legend__item relations-legend__item--citation">Citação direta</span>
+        <span class="relations-legend__item relations-legend__item--shared">Referências compartilhadas</span>
+        <span class="relations-legend__item relations-legend__item--metadata">Afinidade por metadados</span>
+        <span class="relations-legend__item relations-legend__item--unavailable">Indisponível</span>
+      </div>
+      <div class="relations-explorer">
+        <label for="relacoes-documento"><span>Obra central</span><select id="relacoes-documento"></select></label>
+        <div id="relacoes-resumo" class="relations-explorer__summary"></div>
+      </div>
+    </section>
+
+    <section id="qualidade-view" class="app-view page-view" aria-labelledby="qualidade-page-title" hidden>
+      <div id="qualidade-page"></div>
     </section>
   </main>
 
@@ -176,6 +223,13 @@
     <div class="dendrogram-shell">
       <button id="fechar-dendrograma" class="close-button" type="button" aria-label="Fechar coleções sugeridas">×</button>
       <div id="dendrograma-conteudo"></div>
+    </div>
+  </dialog>
+
+  <dialog id="comparacao-documentos" class="utility-dialog comparison-dialog">
+    <div class="utility-shell">
+      <button id="fechar-comparacao" class="close-button" type="button" aria-label="Fechar comparação">×</button>
+      <div id="comparacao-conteudo"></div>
     </div>
   </dialog>
 

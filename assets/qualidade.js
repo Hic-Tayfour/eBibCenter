@@ -18,7 +18,29 @@
     "bib-verificado": "Bib verificado",
     "bib-estrutural": "Bib completo não verificado",
     "bib-pendente": "Bib pendente",
+    "duplicata-provavel": "Duplicata provável",
   };
+
+  function normalize(value) {
+    return String(value || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLocaleLowerCase("pt-BR")
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim();
+  }
+
+  const duplicateIds = (() => {
+    const groups = new Map();
+    catalog.forEach(record => {
+      const title = normalize(record.titulo);
+      if (!title) return;
+      const key = `${title}::${record.ano || "sem-ano"}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(record.id);
+    });
+    return new Set([...groups.values()].filter(ids => ids.length > 1).flat());
+  })();
 
   function escapeHtml(value) {
     return String(value ?? "")
@@ -63,6 +85,7 @@
     if ((record.bibIncompleto || []).length) values.push("metadados-pendentes");
     if (pdfReadable && network?.bibliographyState === "not_found") values.push("referencias-nao-detectadas");
     if (pdfReadable && affinity?.available && !affinity.traceable) values.push("afinidade-nao-calculavel");
+    if (duplicateIds.has(record.id)) values.push("duplicata-provavel");
     values.push(`bib-${bibStatus(record).code}`);
     return values;
   }
@@ -75,7 +98,8 @@
     return catalog.filter(record => matches(record, code)).length;
   }
 
-  function render() {
+  function render(target = content) {
+    if (!target) return;
     const verified = count("bib-verificado");
     const structural = count("bib-estrutural");
     const pending = count("bib-pendente");
@@ -86,8 +110,9 @@
       ["metadados-pendentes", "Registros sem campos bibliográficos essenciais."],
       ["referencias-nao-detectadas", "PDFs legíveis sem seção bibliográfica formal reconhecida."],
       ["afinidade-nao-calculavel", "PDFs legíveis com menos de duas referências extraíveis."],
+      ["duplicata-provavel", "Mesmo título e ano em mais de um registro; requer conferência manual."],
     ];
-    content.innerHTML = `
+    target.innerHTML = `
       <header class="quality-header">
         <p class="eyebrow">Auditoria local</p>
         <h2>Qualidade e revisão</h2>
@@ -117,7 +142,6 @@
     if (!dialog.open) dialog.showModal();
   }
 
-  document.querySelector("#abrir-qualidade")?.addEventListener("click", open);
   document.querySelector("#fechar-qualidade")?.addEventListener("click", () => dialog.close());
   dialog?.addEventListener("click", event => {
     if (event.target === dialog) dialog.close();
@@ -129,5 +153,12 @@
     }));
   });
 
-  window.QualidadeBiblioteca = { bibStatus, issues, matches, label: code => labels[code] || code, open };
+  window.QualidadeBiblioteca = {
+    bibStatus,
+    issues,
+    matches,
+    label: code => labels[code] || code,
+    open,
+    renderInto: render,
+  };
 })();
