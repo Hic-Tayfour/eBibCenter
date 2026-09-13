@@ -727,6 +727,264 @@
     });
   }
 
+  function proximityForLeaves(leaves, distance) {
+    if (leaves.length < 2) return 0;
+    const nearest = leaves.map(index => Math.max(
+      ...leaves
+        .filter(other => other !== index)
+        .map(other => 1 - distance[index][other])
+    ));
+    return nearest.reduce((sum, value) => sum + value, 0) / nearest.length;
+  }
+
+  function secondaryGroups(leaves, model) {
+    if (leaves.length < 4) return [];
+    const localDistance = leaves.map(first => {
+      const row = new Float64Array(leaves.length);
+      leaves.forEach((second, index) => { row[index] = model.distance[first][second]; });
+      return row;
+    });
+    const localRoot = averageLinkage(localDistance);
+    const k = Math.min(4, Math.max(2, Math.round(Math.sqrt(leaves.length))));
+    return cutTree(localRoot, k).map(group => {
+      const originalLeaves = group.leaves.map(index => leaves[index]);
+      return {
+        leaves: originalLeaves,
+        proximity: proximityForLeaves(originalLeaves, model.distance),
+      };
+    });
+  }
+
+  function packCircles(items, maximumRadius, gap = 4) {
+    if (!items.length) return [];
+    const ordered = [...items]
+      .map(item => ({ ...item, rawRadius: 7 + Math.sqrt(Math.max(1, item.weight)) * 8 }))
+      .sort((a, b) => b.rawRadius - a.rawRadius);
+    const placed = [];
+    ordered.forEach((item, itemIndex) => {
+      if (itemIndex === 0) {
+        placed.push({ ...item, x: 0, y: 0 });
+        return;
+      }
+      let candidate = null;
+      for (let step = 1; step < 18000; step += 1) {
+        const angle = step * 0.54;
+        const radius = 2.45 * Math.sqrt(step);
+        const x = Math.cos(angle) * radius;
+        const y = Math.sin(angle) * radius;
+        const clear = placed.every(other =>
+          Math.hypot(x - other.x, y - other.y) >= item.rawRadius + other.rawRadius + gap
+        );
+        if (clear) {
+          candidate = { ...item, x, y };
+          break;
+        }
+      }
+      placed.push(candidate || { ...item, x: itemIndex * (item.rawRadius + gap), y: 0 });
+    });
+    const extent = Math.max(...placed.map(item => Math.hypot(item.x, item.y) + item.rawRadius), 1);
+    const scale = maximumRadius / extent;
+    return placed.map(item => ({
+      ...item,
+      x: item.x * scale,
+      y: item.y * scale,
+      radius: item.rawRadius * scale,
+    }));
+  }
+
+  function pointPositions(leaves, centerX, centerY, radius) {
+    if (leaves.length === 1) return [{ index: leaves[0], x: centerX, y: centerY }];
+    return leaves.map((index, order) => {
+      const fraction = Math.sqrt((order + 0.65) / leaves.length);
+      const angle = order * 2.399963229728653;
+      return {
+        index,
+        x: centerX + Math.cos(angle) * radius * fraction,
+        y: centerY + Math.sin(angle) * radius * fraction,
+      };
+    });
+  }
+
+  function mapFocusMarkup(collection, model) {
+    if (collection.unassigned) {
+      return `
+        <p class="eyebrow">Fora das coleções</p>
+        <h4>Sem vínculo confiável</h4>
+        <p>${collection.leaves.length} obras não ultrapassaram o limiar mínimo de ${Math.round(minimumSimilarity * 100)}%.</p>
+        <button class="button button--quiet" type="button" data-cluster-unassigned>Ver no catálogo</button>`;
+    }
+    const representative = model.records[collection.representativeIndex];
+    return `
+      <p class="eyebrow">${escapeHtml(collection.code)} · ${escapeHtml(collection.level.label)}</p>
+      <h4>${escapeHtml(collection.title)}</h4>
+      <p><strong>${collection.leaves.length} obras</strong> · proximidade local ${Math.round(collection.proximity * 100)}%.</p>
+      <dl>
+        <dt>Obra representativa</dt>
+        <dd><button type="button" data-cluster-open="${escapeHtml(representative.id)}">${escapeHtml(representative.titulo)}</button></dd>
+        <dt>Base observada</dt>
+        <dd>${escapeHtml(collection.evidence.join(" · "))}</dd>
+      </dl>
+      <div class="cluster-map__focus-actions">
+        <button class="button" type="button" data-cluster-apply="${escapeHtml(collection.code)}">Ver no catálogo</button>
+        <button class="button button--quiet" type="button" data-cluster-select="${escapeHtml(collection.code)}">Selecionar coleção</button>
+      </div>`;
+  }
+
+  function renderClusterMap(model, analysis, elements) {
+    const width = 1040;
+    const height = 700;
+    const centerX = width / 2;
+    const centerY = height / 2 + 12;
+    const outerRadius = 315;
+    const collections = [
+      ...analysis.collections,
+      ...(analysis.unassigned.length ? [{
+        code: "U",
+        title: "Sem vínculo confiável",
+        leaves: analysis.unassigned,
+        unassigned: true,
+      }] : []),
+    ];
+    const packed = packCircles(
+      collections.map(collection => ({ key: collection.code, weight: collection.leaves.length, collection })),
+      outerRadius - 18,
+      5
+    ).map(item => ({
+      ...item,
+      x: centerX + item.x,
+      y: centerY + item.y,
+    }));
+    const bounds = new Map(packed.map(item => [item.key, item]));
+    const svg = elements.svg;
+    svg.replaceChildren();
+    svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+    svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
+
+    const title = svgElement("title");
+    title.textContent = `Mapa hierárquico de ${model.records.length} obras em ${analysis.collections.length} coleções`;
+    const description = svgElement("desc");
+    description.textContent = "Cada ponto representa uma obra. Contornos maiores representam coleções e contornos internos representam subdivisões mais coesas da hierarquia.";
+    svg.append(title, description);
+    svg.append(svgElement("ellipse", {
+      cx: centerX,
+      cy: centerY,
+      rx: outerRadius + 16,
+      ry: outerRadius + 5,
+      class: "cluster-map__universe",
+    }));
+
+    packed.forEach((item, collectionIndex) => {
+      const { collection } = item;
+      const group = svgElement("g", {
+        class: `cluster-map__collection${collection.unassigned ? " cluster-map__collection--unassigned" : ""}`,
+        role: "button",
+        tabindex: "0",
+        "data-cluster-map": collection.code,
+        "aria-label": `${collection.title}, ${collection.leaves.length} obras. Selecionar e ampliar grupo.`,
+      });
+      group.style.setProperty("--cluster-color", clusterColors[collectionIndex % clusterColors.length]);
+      const shape = svgElement("circle", {
+        cx: item.x,
+        cy: item.y,
+        r: Math.max(7, item.radius),
+        class: "cluster-map__collection-shape",
+      });
+      const tooltip = svgElement("title");
+      tooltip.textContent = `${collection.code} · ${collection.title} · ${collection.leaves.length} obras${collection.proximity ? ` · proximidade ${Math.round(collection.proximity * 100)}%` : ""}`;
+      group.append(shape, tooltip);
+
+      const localRadius = Math.max(5, item.radius * 0.72);
+      const secondary = collection.unassigned ? [] : secondaryGroups(collection.leaves, model);
+      const meaningfulSecondary = secondary.length > 1 && secondary.some(subgroup =>
+        subgroup.leaves.length > 1 && subgroup.proximity >= minimumSimilarity + 0.08
+      );
+      let positions = [];
+      if (meaningfulSecondary) {
+        const subPacked = packCircles(
+          secondary.map((subgroup, index) => ({ key: index, weight: subgroup.leaves.length, subgroup })),
+          localRadius,
+          2
+        );
+        subPacked.forEach(subItem => {
+          const subX = item.x + subItem.x;
+          const subY = item.y + subItem.y;
+          const drawContour = subItem.subgroup.leaves.length > 1
+            && subItem.subgroup.proximity >= minimumSimilarity + 0.08;
+          if (drawContour) {
+            group.append(svgElement("circle", {
+              cx: subX,
+              cy: subY,
+              r: Math.max(4, subItem.radius),
+              class: "cluster-map__subgroup",
+            }));
+          }
+          positions.push(...pointPositions(
+            subItem.subgroup.leaves,
+            subX,
+            subY,
+            Math.max(1, subItem.radius * 0.62)
+          ));
+        });
+      } else {
+        positions = pointPositions(collection.leaves, item.x, item.y, localRadius);
+      }
+
+      positions.forEach(position => {
+        const record = model.records[position.index];
+        const documentNode = svgElement("g", {
+          class: "cluster-map__document",
+          role: "button",
+          tabindex: "0",
+          "data-cluster-map-document": record.id,
+          "aria-label": `Abrir ficha de ${record.titulo}`,
+        });
+        documentNode.append(
+          svgElement("circle", { cx: position.x, cy: position.y, r: 8, class: "cluster-map__document-hit" }),
+          svgElement("circle", { cx: position.x, cy: position.y, r: 3.2, class: "cluster-map__document-dot" })
+        );
+        const documentTitle = svgElement("title");
+        documentTitle.textContent = `${record.titulo} · ${record.assunto || "Sem assunto"}`;
+        documentNode.append(documentTitle);
+        group.append(documentNode);
+      });
+
+      if (item.radius >= 22) {
+        const label = svgElement("text", {
+          x: item.x,
+          y: item.y - Math.max(9, item.radius - 15),
+          class: "cluster-map__label",
+          "text-anchor": "middle",
+        });
+        label.textContent = `${collection.code} · ${collection.leaves.length}`;
+        group.append(label);
+      }
+      svg.append(group);
+    });
+
+    const select = (code, zoom = true) => {
+      const collection = collections.find(item => item.code === code);
+      const bound = bounds.get(code);
+      if (!collection || !bound) return;
+      svg.querySelectorAll("[data-cluster-map]").forEach(group => {
+        group.classList.toggle("cluster-map__collection--selected", group.dataset.clusterMap === code);
+      });
+      elements.focus.innerHTML = mapFocusMarkup(collection, model);
+      if (zoom) {
+        const margin = Math.max(16, bound.radius * 0.18);
+        const size = (bound.radius + margin) * 2;
+        svg.setAttribute("viewBox", `${bound.x - size / 2} ${bound.y - size / 2} ${size} ${size}`);
+        elements.reset.hidden = false;
+      }
+    };
+    const reset = () => {
+      svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+      elements.reset.hidden = true;
+    };
+    const initialCode = analysis.collections[0]?.code || (analysis.unassigned.length ? "U" : "");
+    if (initialCode) select(initialCode, false);
+    return { select, reset };
+  }
+
   function mount(container, records, options = {}) {
     renderToken += 1;
     const token = renderToken;
@@ -767,6 +1025,27 @@
             </div>
             <p><strong>Importante:</strong> o percentual é um indicador comparativo desta biblioteca, não uma probabilidade nem prova de relação bibliográfica.</p>
           </div>
+          <section class="cluster-map" aria-labelledby="cluster-map-title">
+            <div class="cluster-map__heading">
+              <div>
+                <p class="eyebrow">Hierarquia navegável</p>
+                <h3 id="cluster-map-title">Mapa das coleções</h3>
+                <p>Pontos são obras; contornos representam coleções e subdivisões mais coesas. Selecione um contorno para ampliar.</p>
+              </div>
+              <button id="cluster-map-reset" class="button button--quiet" type="button" hidden>Ver mapa completo</button>
+            </div>
+            <div class="cluster-map__layout">
+              <div id="cluster-map-chart" class="cluster-map__chart">
+                <svg role="img" aria-labelledby="cluster-map-title"></svg>
+              </div>
+              <aside id="cluster-map-focus" class="cluster-map__focus" aria-live="polite"></aside>
+            </div>
+            <div class="cluster-map__legend" aria-label="Legenda do mapa">
+              <span><i class="cluster-map__legend-dot" aria-hidden="true"></i> Obra</span>
+              <span><i class="cluster-map__legend-contour" aria-hidden="true"></i> Coleção</span>
+              <span><i class="cluster-map__legend-contour cluster-map__legend-contour--inner" aria-hidden="true"></i> Subgrupo com afinidade mais forte</span>
+            </div>
+          </section>
           <div class="affinity-collections__heading">
             <div><h3>Coleções encontradas</h3><p>Abra uma obra para conferir a ficha ou aplique a coleção como filtro no catálogo.</p></div>
             <button id="dendrograma-arvore-toggle" class="button button--quiet" type="button" aria-expanded="false">Ver árvore técnica</button>
@@ -808,6 +1087,14 @@
           chart: container.querySelector("#dendrograma-grafico"),
           svg: container.querySelector("#dendrograma-grafico svg"),
         };
+        const mapElements = {
+          chart: container.querySelector("#cluster-map-chart"),
+          svg: container.querySelector("#cluster-map-chart svg"),
+          focus: container.querySelector("#cluster-map-focus"),
+          reset: container.querySelector("#cluster-map-reset"),
+        };
+        const clusterMap = renderClusterMap(model, analysis, mapElements);
+        mapElements.reset.addEventListener("click", clusterMap.reset);
         const update = () => renderTree(model, Number(elements.cut.value), elements);
         elements.cut.addEventListener("input", update);
         elements.suggested.addEventListener("click", () => {
@@ -838,6 +1125,16 @@
           showAll.textContent = expanded ? `Mostrar todas as ${analysis.collections.length} coleções` : "Mostrar somente as prioritárias";
         });
         container.onclick = event => {
+          const mapDocument = event.target.closest("[data-cluster-map-document]");
+          if (mapDocument) {
+            document.dispatchEvent(new CustomEvent("catalogo:open-details", { detail: { id: mapDocument.dataset.clusterMapDocument } }));
+            return;
+          }
+          const mapCollection = event.target.closest("[data-cluster-map]");
+          if (mapCollection) {
+            clusterMap.select(mapCollection.dataset.clusterMap);
+            return;
+          }
           const open = event.target.closest("[data-cluster-open]");
           if (open) {
             document.dispatchEvent(new CustomEvent("catalogo:open-details", { detail: { id: open.dataset.clusterOpen } }));
@@ -885,6 +1182,19 @@
           if (node && (event.key === "Enter" || event.key === " ")) {
             event.preventDefault();
             document.dispatchEvent(new CustomEvent("catalogo:open-details", { detail: { id: node.dataset.dendrogramNode } }));
+          }
+        });
+        mapElements.svg.addEventListener("keydown", event => {
+          const documentNode = event.target.closest("[data-cluster-map-document]");
+          if (documentNode && (event.key === "Enter" || event.key === " ")) {
+            event.preventDefault();
+            document.dispatchEvent(new CustomEvent("catalogo:open-details", { detail: { id: documentNode.dataset.clusterMapDocument } }));
+            return;
+          }
+          const collectionNode = event.target.closest("[data-cluster-map]");
+          if (collectionNode && (event.key === "Enter" || event.key === " ")) {
+            event.preventDefault();
+            clusterMap.select(collectionNode.dataset.clusterMap);
           }
         });
       } catch (error) {

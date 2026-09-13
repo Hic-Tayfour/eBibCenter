@@ -28,6 +28,7 @@
     qualidade: document.querySelector("#filtro-qualidade"),
     ordenacao: document.querySelector("#ordenacao"),
     limpar: document.querySelector("#limpar"),
+    limparNav: document.querySelector("#limpar-filtros-nav"),
     grade: document.querySelector("#grade"),
     vazio: document.querySelector("#estado-vazio"),
     contagem: document.querySelector("#resultado-contagem"),
@@ -294,6 +295,10 @@
     el.ativos.innerHTML = filters.map(([field, value, label]) =>
       `<button type="button" class="filter-chip" data-remove="${field}">${escapeHtml(label)}: ${escapeHtml(value)} <span aria-hidden="true">×</span></button>`
     ).join("");
+    if (el.limparNav) {
+      el.limparNav.hidden = filters.length === 0;
+      el.limparNav.textContent = `Limpar filtros (${filters.length})`;
+    }
   }
 
   function render(reset = false) {
@@ -313,6 +318,7 @@
   }
 
   function clearAll() {
+    const currentView = activeView;
     colecaoAtiva = null;
     el.busca.value = "";
     el.assunto.value = "";
@@ -324,6 +330,7 @@
     el.qualidade.value = "";
     el.ordenacao.value = "titulo";
     render(true);
+    if (currentView !== "biblioteca") showAppView(currentView);
   }
 
   function showToast(message) {
@@ -927,6 +934,7 @@
   el.qualidade.addEventListener("change", () => render(true));
   el.ordenacao.addEventListener("change", () => render(false));
   el.limpar.addEventListener("click", clearAll);
+  el.limparNav?.addEventListener("click", clearAll);
   el.mais.addEventListener("click", () => {
     limite += pageSize;
     render(false);

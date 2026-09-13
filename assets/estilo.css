@@ -2587,6 +2587,23 @@ button.meta-chip:hover {
   border-bottom-color: var(--gold);
 }
 
+.primary-nav .primary-nav__clear {
+  margin-left: 0.45rem;
+  color: #fff8df;
+  background: rgba(178, 145, 56, 0.2);
+  border-right: 1px solid rgba(215, 195, 132, 0.48);
+  border-left: 1px solid rgba(215, 195, 132, 0.48);
+}
+
+.primary-nav .primary-nav__clear:hover {
+  color: var(--forest);
+  background: var(--gold-soft);
+}
+
+.primary-nav .primary-nav__clear[hidden] {
+  display: none;
+}
+
 .app-view[hidden] {
   display: none;
 }
@@ -3005,6 +3022,224 @@ body.selection-mode .catalog-table__select {
   margin-top: 0;
 }
 
+/* Mapa hierárquico das coleções */
+.cluster-map {
+  margin: 1.6rem 0 2rem;
+  padding: 1rem;
+  background: rgba(255, 253, 246, 0.72);
+  border: 1px solid var(--gold-soft);
+  border-top: 4px solid var(--forest);
+}
+
+.cluster-map__heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.85rem;
+}
+
+.cluster-map__heading h3 {
+  margin-bottom: 0.2rem;
+  color: var(--forest);
+  font-size: 1.55rem;
+  font-weight: 500;
+}
+
+.cluster-map__heading p:not(.eyebrow) {
+  max-width: 760px;
+  margin-bottom: 0;
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: 0.82rem;
+}
+
+.cluster-map__layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(250px, 0.34fr);
+  align-items: stretch;
+  gap: 0.9rem;
+}
+
+.cluster-map__chart {
+  min-width: 0;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at center, rgba(13, 74, 45, 0.045), transparent 64%),
+    #fffdf7;
+  border: 1px solid var(--line);
+}
+
+.cluster-map__chart svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  min-height: 430px;
+  max-height: 680px;
+}
+
+.cluster-map__universe {
+  fill: rgba(178, 145, 56, 0.035);
+  stroke: rgba(13, 74, 45, 0.58);
+  stroke-width: 1.8;
+}
+
+.cluster-map__collection {
+  color: var(--cluster-color);
+  cursor: zoom-in;
+  outline: none;
+}
+
+.cluster-map__collection-shape {
+  fill: color-mix(in srgb, var(--cluster-color) 10%, transparent);
+  stroke: var(--cluster-color);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+  transition: fill 140ms ease, stroke-width 140ms ease;
+}
+
+.cluster-map__collection:hover > .cluster-map__collection-shape,
+.cluster-map__collection:focus > .cluster-map__collection-shape,
+.cluster-map__collection--selected > .cluster-map__collection-shape {
+  fill: color-mix(in srgb, var(--cluster-color) 19%, transparent);
+  stroke-width: 3.5;
+}
+
+.cluster-map__collection--unassigned .cluster-map__collection-shape {
+  fill: rgba(109, 106, 95, 0.045);
+  stroke: rgba(109, 106, 95, 0.78);
+  stroke-dasharray: 7 5;
+}
+
+.cluster-map__subgroup {
+  fill: color-mix(in srgb, var(--cluster-color) 7%, transparent);
+  stroke: color-mix(in srgb, var(--cluster-color) 70%, var(--cream-light));
+  stroke-width: 1.2;
+  vector-effect: non-scaling-stroke;
+}
+
+.cluster-map__document {
+  cursor: pointer;
+  outline: none;
+}
+
+.cluster-map__document-hit {
+  fill: transparent;
+}
+
+.cluster-map__document-dot {
+  fill: var(--cluster-color);
+  stroke: var(--cream-light);
+  stroke-width: 1.2;
+  vector-effect: non-scaling-stroke;
+}
+
+.cluster-map__document:hover .cluster-map__document-dot,
+.cluster-map__document:focus .cluster-map__document-dot {
+  fill: var(--forest);
+  stroke: var(--gold);
+  stroke-width: 2.4;
+}
+
+.cluster-map__label {
+  fill: var(--forest-2);
+  font-family: var(--sans);
+  font-size: 10px;
+  font-weight: 800;
+  pointer-events: none;
+}
+
+.cluster-map__focus {
+  min-width: 0;
+  padding: 1rem;
+  background: var(--cream-light);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--gold);
+}
+
+.cluster-map__focus h4 {
+  margin-bottom: 0.4rem;
+  color: var(--forest);
+  font-size: 1.25rem;
+}
+
+.cluster-map__focus > p:not(.eyebrow),
+.cluster-map__focus dt,
+.cluster-map__focus dd {
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: 0.78rem;
+}
+
+.cluster-map__focus dl {
+  margin: 1rem 0;
+}
+
+.cluster-map__focus dt {
+  margin-top: 0.7rem;
+  color: var(--forest);
+  font-weight: 800;
+}
+
+.cluster-map__focus dd {
+  margin: 0.15rem 0 0;
+}
+
+.cluster-map__focus dd button {
+  padding: 0;
+  color: var(--forest);
+  background: transparent;
+  border: 0;
+  font: inherit;
+  font-weight: 700;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 0.14em;
+}
+
+.cluster-map__focus-actions {
+  display: grid;
+  gap: 0.45rem;
+  margin-top: 1rem;
+}
+
+.cluster-map__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem 1.1rem;
+  margin-top: 0.7rem;
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: 0.72rem;
+}
+
+.cluster-map__legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.cluster-map__legend-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  background: var(--forest);
+  border: 1px solid var(--cream-light);
+  border-radius: 50%;
+}
+
+.cluster-map__legend-contour {
+  width: 1rem;
+  height: 1rem;
+  border: 2px solid var(--dendrogram-cluster-1);
+  border-radius: 50%;
+}
+
+.cluster-map__legend-contour--inner {
+  width: 0.75rem;
+  height: 0.75rem;
+  border-width: 1px;
+}
+
 @media (max-width: 900px) {
   .library-layout {
     grid-template-columns: 1fr;
@@ -3021,6 +3256,14 @@ body.selection-mode .catalog-table__select {
 
   .relation-type-grid {
     grid-template-columns: 1fr;
+  }
+
+  .cluster-map__layout {
+    grid-template-columns: 1fr;
+  }
+
+  .cluster-map__chart svg {
+    min-height: 360px;
   }
 
   .filters {
@@ -3165,6 +3408,19 @@ body.selection-mode .catalog-table__select {
 
   .detail-navigation button:last-child {
     margin-left: 0;
+  }
+
+  .cluster-map {
+    padding: 0.7rem;
+  }
+
+  .cluster-map__heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .cluster-map__chart svg {
+    min-height: 300px;
   }
 
   .catalog-grid {
