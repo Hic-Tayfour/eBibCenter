@@ -115,7 +115,7 @@
 
   function parseQuery(value) {
     const filters = [];
-    const pattern = /(assunto|subassunto|autor|tipo|titulo|tag|publicacao|publicação|ano|qualidade):(?:"([^"]+)"|(\S+))/gi;
+    const pattern = /(assunto|subassunto|autor|tipo|titulo|tag|publicacao|publicação|ano|qualidade|sumario|sumário):(?:"([^"]+)"|(\S+))/gi;
     const free = value.replace(pattern, (_, field, quoted, plain) => {
       filters.push({ field: normalize(field), value: normalize(quoted || plain) });
       return " ";
@@ -138,6 +138,7 @@
       record.bibStatus,
       ...(record.tags || []),
       record.nomeArquivo,
+      ...(record.sumario || []).map(item => item.titulo),
     ].join(" "));
   }
 
@@ -152,6 +153,7 @@
       tag: (record.tags || []).join(" "),
       ano: record.ano,
       qualidade: qualidade?.issues(record).join(" ") || "",
+      sumario: (record.sumario || []).map(item => item.titulo).join(" "),
     };
     return normalize(fields[field]);
   }
@@ -630,6 +632,26 @@
       </section>`;
   }
 
+  function tocMarkup(record, entries) {
+    const canOpenPdf = Boolean(window.VisualizadorPDF);
+    return `
+      <section class="detail-section document-toc-section" aria-labelledby="document-toc-title">
+        <div class="detail-section__heading">
+          <p class="eyebrow">Estrutura do documento</p>
+          <h3 id="document-toc-title">Sumário</h3>
+        </div>
+        <p class="document-toc__intro">${entries.length} ${entries.length === 1 ? "seção transcrita" : "seções transcritas"} da nota Markdown.${canOpenPdf ? " Selecione uma seção para abrir a página correspondente." : ""}</p>
+        <ol class="document-toc">
+          ${entries.map(item => {
+            const level = Math.max(1, Math.min(4, Number(item.nivel) || 1));
+            const page = Math.max(1, Number(item.pagina) || 1);
+            const content = `<span class="document-toc__title">${escapeHtml(item.titulo)}</span><span class="document-toc__page">p. ${page}</span>`;
+            return `<li class="document-toc__item document-toc__item--level-${level}">${canOpenPdf ? `<button type="button" data-toc-open="${escapeHtml(record.id)}" data-page="${page}">${content}</button>` : `<div>${content}</div>`}</li>`;
+          }).join("")}
+        </ol>
+      </section>`;
+  }
+
   function detailMarkup(record) {
     const authors = record.autores?.length ? record.autores.join("; ") : "Autoria não identificada";
     const missing = record.bibIncompleto || [];
@@ -662,6 +684,7 @@
     const previous = position > 0 ? sequence[position - 1] : null;
     const next = position >= 0 && position < sequence.length - 1 ? sequence[position + 1] : null;
     const abstract = record.resumo || record.abstract || "";
+    const toc = Array.isArray(record.sumario) ? record.sumario : [];
     return `
       <article class="detail">
         <div class="detail__visual">
@@ -690,6 +713,7 @@
           </div>
           <div class="detail-tabs" role="tablist" aria-label="Seções da ficha">
             <button id="detalhes-tab-ficha" type="button" role="tab" data-detail-tab="ficha" aria-controls="detalhes-painel-ficha" aria-selected="true" tabindex="0">Ficha</button>
+            ${toc.length ? `<button id="detalhes-tab-sumario" type="button" role="tab" data-detail-tab="sumario" aria-controls="detalhes-painel-sumario" aria-selected="false" tabindex="-1">Sumário <span>${toc.length}</span></button>` : ""}
             <button id="detalhes-tab-relacoes" type="button" role="tab" data-detail-tab="relacoes" aria-controls="detalhes-painel-relacoes" aria-selected="false" tabindex="-1">Relacionados</button>
             <button id="detalhes-tab-citacao" type="button" role="tab" data-detail-tab="citacao" aria-controls="detalhes-painel-citacao" aria-selected="false" tabindex="-1">Citação</button>
           </div>
@@ -713,6 +737,7 @@
             ${(official.fullTextUrl || official.explicitPageUrl) ? `<p class="official-link-evidence"><strong>Origem do acesso:</strong> ${official.sourceUrl ? `<a href="${escapeHtml(official.sourceUrl)}" target="_blank" rel="noreferrer"><strong>${escapeHtml(official.source || "fonte consultada")}</strong></a>` : `<strong>${escapeHtml(official.source || "fonte consultada")}</strong>`}${official.verifiedAt ? ` · verificado em ${escapeHtml(official.verifiedAt)}` : ""}.</p>` : ""}
             ${qualityIssues.length ? `<p class="quality-inline"><strong>Revisar:</strong> ${qualityIssues.map(issue => escapeHtml(qualidade.label(issue))).join(" · ")}</p>` : ""}
           </div>
+          ${toc.length ? `<div id="detalhes-painel-sumario" class="detail-panel" role="tabpanel" aria-labelledby="detalhes-tab-sumario" data-detail-panel="sumario" hidden>${tocMarkup(record, toc)}</div>` : ""}
           <div id="detalhes-painel-relacoes" class="detail-panel" role="tabpanel" aria-labelledby="detalhes-tab-relacoes" data-detail-panel="relacoes" hidden>
             ${loadingContextMarkup()}
             ${hasNetworkRelations || hasAffinityRelations ? `
@@ -1176,6 +1201,8 @@
 
     const detailTab = event.target.closest("[data-detail-tab]");
     if (detailTab) switchDetailTab(detailTab.dataset.detailTab);
+    const tocOpen = event.target.closest("[data-toc-open]");
+    if (tocOpen) window.VisualizadorPDF?.open(tocOpen.dataset.tocOpen, Number(tocOpen.dataset.page) || 1);
     const previous = event.target.closest("[data-detail-prev]");
     if (previous?.dataset.detailPrev) openDetails(previous.dataset.detailPrev);
     const next = event.target.closest("[data-detail-next]");

@@ -3049,6 +3049,18 @@ body.selection-mode .catalog-table__select {
   border-color: var(--forest);
 }
 
+.detail-tabs button span {
+  display: inline-grid;
+  min-width: 1.35rem;
+  min-height: 1.35rem;
+  margin-left: 0.25rem;
+  place-items: center;
+  color: var(--forest);
+  background: var(--cream-light);
+  border: 1px solid var(--gold-soft);
+  font-size: 0.64rem;
+}
+
 .detail-panel[hidden] {
   display: none;
 }
@@ -3057,6 +3069,96 @@ body.selection-mode .catalog-table__select {
   color: var(--muted);
   font-family: var(--sans);
   font-size: 0.85rem;
+}
+
+.document-toc__intro {
+  margin-bottom: 0.8rem;
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: 0.82rem;
+}
+
+.document-toc {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--line);
+}
+
+.document-toc__item {
+  --toc-indent: 0rem;
+  margin-left: var(--toc-indent);
+  border-bottom: 1px solid var(--line);
+}
+
+.document-toc__item--level-2 {
+  --toc-indent: 1.25rem;
+}
+
+.document-toc__item--level-3 {
+  --toc-indent: 2.5rem;
+}
+
+.document-toc__item--level-4 {
+  --toc-indent: 3.75rem;
+}
+
+.document-toc__item button,
+.document-toc__item > div {
+  width: 100%;
+  padding: 0.62rem 0.7rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 1rem;
+  color: var(--ink);
+  background: transparent;
+  border: 0;
+  font-family: var(--sans);
+  font-size: 0.82rem;
+  line-height: 1.4;
+  text-align: left;
+}
+
+.document-toc__item button {
+  cursor: pointer;
+}
+
+.document-toc__item button:hover,
+.document-toc__item button:focus-visible {
+  color: var(--forest);
+  background: rgba(178, 145, 56, 0.1);
+}
+
+.document-toc__item--level-1 .document-toc__title {
+  color: var(--forest);
+  font-weight: 800;
+}
+
+.document-toc__item--level-3 .document-toc__title,
+.document-toc__item--level-4 .document-toc__title {
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.document-toc__page {
+  color: var(--muted);
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+@media (max-width: 570px) {
+  .document-toc__item--level-2 {
+    --toc-indent: 0.6rem;
+  }
+
+  .document-toc__item--level-3 {
+    --toc-indent: 1.2rem;
+  }
+
+  .document-toc__item--level-4 {
+    --toc-indent: 1.8rem;
+  }
 }
 
 .comparison-dialog {
