@@ -22,9 +22,17 @@
 
   <header class="masthead">
     <div class="masthead__inner">
-      <div>
+      <div class="masthead__brand">
         <p class="eyebrow">Biblioteca Digital</p>
         <h1>Catálogo de PDFs</h1>
+      </div>
+      <div class="masthead__search search-wrap">
+        <label for="busca">Pesquisar no catálogo</label>
+        <div class="search-field">
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m21 21-4.35-4.35m2.35-5.65a8 8 0 1 1-16 0 8 8 0 0 1 16 0Z"/></svg>
+          <input id="busca" type="search" autocomplete="off" spellcheck="false" placeholder='Buscar título, autor ou usar assunto:"Machine Learning"'>
+          <kbd>/</kbd>
+        </div>
       </div>
       <div class="masthead__side">
         <div class="masthead__summary" aria-label="Resumo da biblioteca">
@@ -41,7 +49,7 @@
 
   <nav class="primary-nav" aria-label="Áreas do eBibCenter">
     <div class="primary-nav__inner">
-      <button type="button" data-app-view="biblioteca" aria-pressed="true">Biblioteca</button>
+      <button type="button" data-app-view="biblioteca" aria-pressed="true">Catálogo</button>
       <button id="abrir-dendrograma" type="button" data-app-view="colecoes" aria-pressed="false">Coleções</button>
       <button id="abrir-relacoes" type="button" data-app-view="relacoes" aria-pressed="false">Relações</button>
       <button id="abrir-qualidade" type="button" data-app-view="qualidade" aria-pressed="false">Qualidade</button>
@@ -53,24 +61,18 @@
     <div id="biblioteca-view" class="app-view">
       <div class="library-layout">
     <section class="query-panel" aria-labelledby="consulta-titulo">
-      <div class="section-heading">
-        <span class="section-number">1</span>
+      <div class="filter-panel__heading">
         <div>
-          <h2 id="consulta-titulo">Consultar a biblioteca</h2>
-          <p>Combine texto, assunto e subassunto. Os filtros também podem ser escritos diretamente na busca.</p>
+          <p class="eyebrow">Filtros</p>
+          <h2 id="consulta-titulo">Refinar catálogo</h2>
         </div>
+        <button id="limpar" class="filter-panel__clear" type="button">Limpar tudo</button>
       </div>
+      <p class="filter-panel__description">Combine assunto, tipo, publicação, ano e qualidade.</p>
 
-      <div class="search-wrap">
-        <label for="busca">Busca ou query</label>
-        <div class="search-field">
-          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m21 21-4.35-4.35m2.35-5.65a8 8 0 1 1-16 0 8 8 0 0 1 16 0Z"/></svg>
-          <input id="busca" type="search" autocomplete="off" spellcheck="false" placeholder='Ex.: conformal publicacao:arxiv assunto:"Machine Learning"'>
-          <kbd>/</kbd>
-        </div>
-      </div>
+      <button id="alternar-filtros" class="button button--quiet filters-toggle" type="button" aria-expanded="false" aria-controls="filtros-catalogo">Filtros</button>
 
-      <div class="filters">
+      <div id="filtros-catalogo" class="filters">
         <label>
           <span>Assunto</span>
           <select id="filtro-assunto"><option value="">Todos os assuntos</option></select>
@@ -105,7 +107,6 @@
             <option value="ano-asc">Ano: mais antigo</option>
           </select>
         </label>
-        <button id="limpar" class="button button--quiet" type="button">Limpar filtros</button>
       </div>
 
       <details class="query-help">
@@ -137,44 +138,50 @@
             <button type="button" data-layout="list" aria-pressed="false">Lista</button>
             <button type="button" data-layout="table" aria-pressed="false">Tabela</button>
           </div>
+          <button id="toggle-density" class="button button--quiet" type="button" aria-pressed="false">Compactar</button>
           <button id="toggle-selection-mode" class="button button--quiet" type="button" aria-pressed="false">Selecionar</button>
         </div>
       </div>
 
       <div id="filtros-ativos" class="active-filters" aria-label="Filtros ativos"></div>
 
-      <div id="barra-exportacao" class="selection-bar" aria-label="Exportação bibliográfica em lote" hidden>
-        <div class="selection-bar__summary">
-          <strong id="selecao-contagem" aria-live="polite">0 documentos selecionados</strong>
-          <button id="selecionar-exibidos" type="button">Selecionar exibidos</button>
+      <div id="results-workspace" class="results-workspace">
+        <div class="results-stream">
+          <div id="barra-exportacao" class="selection-bar" aria-label="Exportação bibliográfica em lote" hidden>
+            <div class="selection-bar__summary">
+              <strong id="selecao-contagem" aria-live="polite">0 documentos selecionados</strong>
+              <button id="selecionar-exibidos" type="button">Selecionar exibidos</button>
+            </div>
+            <label class="selection-bar__format" for="formato-exportacao">
+              <span>Formato</span>
+              <select id="formato-exportacao">
+                <option value="bibtex">BibTeX</option>
+                <option value="apa">APA</option>
+                <option value="abnt">ABNT</option>
+              </select>
+            </label>
+            <div class="selection-bar__actions">
+              <button id="dendrograma-selecao" type="button">Agrupar seleção</button>
+              <button id="comparar-selecao" type="button">Comparar</button>
+              <button id="copiar-selecao" type="button">Copiar</button>
+              <button id="baixar-selecao" type="button">Baixar arquivo</button>
+              <button id="limpar-selecao" type="button">Limpar seleção</button>
+            </div>
+          </div>
+
+          <div id="grade" class="catalog-grid"></div>
+
+          <div id="estado-vazio" class="empty-state" hidden>
+            <p class="eyebrow">Nenhum resultado</p>
+            <h3>A consulta não encontrou documentos.</h3>
+            <p>Remova um filtro ou tente termos mais amplos.</p>
+            <button class="button" type="button" data-clear>Limpar consulta</button>
+          </div>
+
+          <button id="carregar-mais" class="button button--more" type="button" hidden>Carregar mais</button>
         </div>
-        <label class="selection-bar__format" for="formato-exportacao">
-          <span>Formato</span>
-          <select id="formato-exportacao">
-            <option value="bibtex">BibTeX</option>
-            <option value="apa">APA</option>
-            <option value="abnt">ABNT</option>
-          </select>
-        </label>
-        <div class="selection-bar__actions">
-          <button id="dendrograma-selecao" type="button">Agrupar seleção</button>
-          <button id="comparar-selecao" type="button">Comparar</button>
-          <button id="copiar-selecao" type="button">Copiar</button>
-          <button id="baixar-selecao" type="button">Baixar arquivo</button>
-          <button id="limpar-selecao" type="button">Limpar seleção</button>
-        </div>
+        <aside id="ficha-rapida" class="quick-preview" aria-label="Ficha rápida do documento" hidden></aside>
       </div>
-
-      <div id="grade" class="catalog-grid"></div>
-
-      <div id="estado-vazio" class="empty-state" hidden>
-        <p class="eyebrow">Nenhum resultado</p>
-        <h3>A consulta não encontrou documentos.</h3>
-        <p>Remova um filtro ou tente termos mais amplos.</p>
-        <button class="button" type="button" data-clear>Limpar consulta</button>
-      </div>
-
-      <button id="carregar-mais" class="button button--more" type="button" hidden>Carregar mais</button>
     </section>
       </div>
     </div>

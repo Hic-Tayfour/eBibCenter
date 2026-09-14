@@ -865,11 +865,10 @@
     const description = svgElement("desc");
     description.textContent = "Cada ponto representa uma obra. Contornos maiores representam coleções e contornos internos representam subdivisões mais coesas da hierarquia.";
     svg.append(title, description);
-    svg.append(svgElement("ellipse", {
+    svg.append(svgElement("circle", {
       cx: centerX,
       cy: centerY,
-      rx: outerRadius + 16,
-      ry: outerRadius + 5,
+      r: outerRadius + 5,
       class: "cluster-map__universe",
     }));
 
@@ -893,7 +892,9 @@
       tooltip.textContent = `${collection.code} · ${collection.title} · ${collection.leaves.length} obras${collection.proximity ? ` · proximidade ${Math.round(collection.proximity * 100)}%` : ""}`;
       group.append(shape, tooltip);
 
-      const localRadius = Math.max(5, item.radius * 0.72);
+      const hasLabel = item.radius >= 40;
+      const contentCenterY = item.y + (hasLabel ? item.radius * 0.15 : 0);
+      const localRadius = Math.max(5, item.radius * (hasLabel ? 0.56 : 0.70));
       const secondary = collection.unassigned ? [] : secondaryGroups(collection.leaves, model);
       const meaningfulSecondary = secondary.length > 1 && secondary.some(subgroup =>
         subgroup.leaves.length > 1 && subgroup.proximity >= minimumSimilarity + 0.08
@@ -907,7 +908,7 @@
         );
         subPacked.forEach(subItem => {
           const subX = item.x + subItem.x;
-          const subY = item.y + subItem.y;
+          const subY = contentCenterY + subItem.y;
           const drawContour = subItem.subgroup.leaves.length > 1
             && subItem.subgroup.proximity >= minimumSimilarity + 0.08;
           if (drawContour) {
@@ -926,7 +927,7 @@
           ));
         });
       } else {
-        positions = pointPositions(collection.leaves, item.x, item.y, localRadius);
+        positions = pointPositions(collection.leaves, item.x, contentCenterY, localRadius);
       }
 
       positions.forEach(position => {
@@ -948,14 +949,24 @@
         group.append(documentNode);
       });
 
-      if (item.radius >= 22) {
+      if (hasLabel) {
+        const labelText = `${collection.code} · ${collection.leaves.length}`;
+        const labelWidth = Math.min(Math.max(56, labelText.length * 6.2), item.radius * 1.55);
+        const labelY = item.y - item.radius * 0.48;
+        group.append(svgElement("rect", {
+          x: item.x - labelWidth / 2,
+          y: labelY - 13,
+          width: labelWidth,
+          height: 26,
+          class: "cluster-map__label-box",
+        }));
         const label = svgElement("text", {
           x: item.x,
-          y: item.y - Math.max(9, item.radius - 15),
+          y: labelY + 4,
           class: "cluster-map__label",
           "text-anchor": "middle",
         });
-        label.textContent = `${collection.code} · ${collection.leaves.length}`;
+        label.textContent = labelText;
         group.append(label);
       }
       svg.append(group);
@@ -967,6 +978,9 @@
       if (!collection || !bound) return;
       svg.querySelectorAll("[data-cluster-map]").forEach(group => {
         group.classList.toggle("cluster-map__collection--selected", group.dataset.clusterMap === code);
+      });
+      elements.choices?.querySelectorAll("[data-cluster-map-choice]").forEach(button => {
+        button.setAttribute("aria-pressed", String(button.dataset.clusterMapChoice === code));
       });
       elements.focus.innerHTML = mapFocusMarkup(collection, model);
       if (zoom) {
@@ -1006,6 +1020,15 @@
         const cards = analysis.collections.map((collection, index) =>
           collectionCard(collection, model, index >= initialCollectionLimit)
         ).join("");
+        const mapChoices = analysis.collections.slice(0, initialCollectionLimit).map((collection, index) => `
+          <button class="cluster-map__choice" type="button" data-cluster-map-choice="${escapeHtml(collection.code)}" aria-pressed="${index === 0}">
+            <strong>${escapeHtml(collection.code)} · ${escapeHtml(collection.title)}</strong>
+            <span>${collection.leaves.length} obras · ${Math.round(collection.proximity * 100)}% de proximidade local</span>
+          </button>`).join("") + (analysis.unassigned.length ? `
+          <button class="cluster-map__choice" type="button" data-cluster-map-choice="U" aria-pressed="${analysis.collections.length === 0}">
+            <strong>U · Sem vínculo confiável</strong>
+            <span>${analysis.unassigned.length} obras preservadas fora das coleções</span>
+          </button>` : "");
         container.innerHTML = `
           <header class="dendrogram-header">
             <p class="eyebrow">Organização por afinidade</p>
@@ -1040,6 +1063,7 @@
               </div>
               <aside id="cluster-map-focus" class="cluster-map__focus" aria-live="polite"></aside>
             </div>
+            <div id="cluster-map-choices" class="cluster-map__choices" aria-label="Selecionar uma coleção no mapa">${mapChoices}</div>
             <div class="cluster-map__legend" aria-label="Legenda do mapa">
               <span><i class="cluster-map__legend-dot" aria-hidden="true"></i> Obra</span>
               <span><i class="cluster-map__legend-contour" aria-hidden="true"></i> Coleção</span>
@@ -1092,6 +1116,7 @@
           svg: container.querySelector("#cluster-map-chart svg"),
           focus: container.querySelector("#cluster-map-focus"),
           reset: container.querySelector("#cluster-map-reset"),
+          choices: container.querySelector("#cluster-map-choices"),
         };
         const clusterMap = renderClusterMap(model, analysis, mapElements);
         mapElements.reset.addEventListener("click", clusterMap.reset);
@@ -1133,6 +1158,11 @@
           const mapCollection = event.target.closest("[data-cluster-map]");
           if (mapCollection) {
             clusterMap.select(mapCollection.dataset.clusterMap);
+            return;
+          }
+          const mapChoice = event.target.closest("[data-cluster-map-choice]");
+          if (mapChoice) {
+            clusterMap.select(mapChoice.dataset.clusterMapChoice);
             return;
           }
           const open = event.target.closest("[data-cluster-open]");

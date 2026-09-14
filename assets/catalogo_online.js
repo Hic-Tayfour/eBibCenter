@@ -12,7 +12,9 @@
   let limite = pageSize;
   let resultados = [];
   let colecaoAtiva = null;
-  let layoutMode = "grid";
+  let layoutMode = readPreference("ebib-layout", "grid");
+  let compactCards = readPreference("ebib-density", "comfortable") === "compact";
+  let previewedId = "";
   let selectionMode = false;
   let activeView = "biblioteca";
   const selecionados = new Set();
@@ -27,9 +29,14 @@
     ano: document.querySelector("#filtro-ano"),
     qualidade: document.querySelector("#filtro-qualidade"),
     ordenacao: document.querySelector("#ordenacao"),
+    alternarFiltros: document.querySelector("#alternar-filtros"),
+    queryPanel: document.querySelector(".query-panel"),
     limpar: document.querySelector("#limpar"),
     limparNav: document.querySelector("#limpar-filtros-nav"),
+    toggleDensity: document.querySelector("#toggle-density"),
     grade: document.querySelector("#grade"),
+    resultsWorkspace: document.querySelector("#results-workspace"),
+    preview: document.querySelector("#ficha-rapida"),
     vazio: document.querySelector("#estado-vazio"),
     contagem: document.querySelector("#resultado-contagem"),
     ativos: document.querySelector("#filtros-ativos"),
@@ -67,6 +74,22 @@
     comparacaoConteudo: document.querySelector("#comparacao-conteudo"),
     fecharComparacao: document.querySelector("#fechar-comparacao"),
   };
+
+  function readPreference(key, fallback) {
+    try {
+      return localStorage.getItem(key) || fallback;
+    } catch {
+      return fallback;
+    }
+  }
+
+  function writePreference(key, value) {
+    try {
+      localStorage.setItem(key, value);
+    } catch {
+      // A interface continua funcional quando o navegador bloqueia armazenamento local.
+    }
+  }
 
   function normalize(value) {
     return String(value || "")
@@ -241,24 +264,31 @@
 
   function cardMarkup(record) {
     const authors = record.autores?.length ? record.autores.join("; ") : "Autoria não identificada";
+    const availability = onlineAvailability(record);
+    const bibLabels = { verificado: "Bib verificado", estrutural: "Bib não verificado", pendente: "Bib pendente" };
     return `
-      <article class="book-card ${selecionados.has(record.id) ? "book-card--selected" : ""}">
+      <article class="book-card ${selecionados.has(record.id) ? "book-card--selected" : ""} ${previewedId === record.id ? "book-card--previewed" : ""}">
         <label class="book-card__select">
           <input type="checkbox" data-select="${record.id}" ${selecionados.has(record.id) ? "checked" : ""}>
           <span>Selecionar</span>
         </label>
-        <button class="book-card__button" type="button" data-open="${record.id}" aria-label="Ver detalhes de ${escapeHtml(record.titulo)}">
-          <div class="cover-frame">${coverMarkup(record)}</div>
+        <div class="book-card__button">
+          <div class="cover-frame">
+            ${coverMarkup(record)}
+            ${availability ? `<span class="book-card__online book-card__online--${availability.kind}">${escapeHtml(availability.label)}</span>` : ""}
+          </div>
           <div class="book-card__body">
             <p class="book-card__subject">${escapeHtml(record.assunto)} · ${escapeHtml(record.subassunto)}</p>
             <h3>${escapeHtml(record.titulo)}</h3>
             <p class="book-card__authors">${escapeHtml(authors)}</p>
+            <p class="book-card__publication-line">${escapeHtml(record.publicacao || "Publicação não identificada")}</p>
             <div class="book-card__footer">
               <span>${escapeHtml(record.tipo)}${record.ano ? ` · ${escapeHtml(record.ano)}` : ""}${record.paginas ? ` · ${record.paginas} p.` : ""}</span>
-              <span class="book-card__publication">${escapeHtml(record.publicacao || "Publicação não identificada")}</span>
+              <span class="bib-state bib-state--${escapeHtml(record.bibStatus || "pendente")}">${escapeHtml(bibLabels[record.bibStatus] || "Bib pendente")}</span>
             </div>
           </div>
-        </button>
+        </div>
+        <button class="book-card__open" type="button" data-preview="${record.id}" aria-label="Visualizar resumo de ${escapeHtml(record.titulo)}"></button>
       </article>`;
   }
 
@@ -299,12 +329,17 @@
       el.limparNav.hidden = filters.length === 0;
       el.limparNav.textContent = `Limpar filtros (${filters.length})`;
     }
+    if (el.alternarFiltros) {
+      const label = el.alternarFiltros.getAttribute("aria-expanded") === "true" ? "Ocultar filtros" : "Filtros";
+      el.alternarFiltros.textContent = filters.length ? `${label} (${filters.length})` : label;
+    }
   }
 
   function render(reset = false) {
     if (reset) limite = pageSize;
     const state = stateFromControls();
     resultados = filterRecords(state);
+    if (previewedId && !resultados.some(record => record.id === previewedId)) closePreview();
     const visible = resultados.slice(0, limite);
     el.grade.className = `catalog-grid catalog-grid--${layoutMode}`;
     el.grade.innerHTML = layoutMode === "table" ? tableMarkup(visible) : visible.map(cardMarkup).join("");
@@ -358,6 +393,13 @@
     el.toggleSelectionMode.textContent = selectionMode ? "Encerrar seleção" : "Selecionar";
   }
 
+  function updateDensity() {
+    document.body.classList.toggle("compact-cards", compactCards);
+    if (!el.toggleDensity) return;
+    el.toggleDensity.setAttribute("aria-pressed", String(compactCards));
+    el.toggleDensity.textContent = compactCards ? "Espaçar cartões" : "Compactar";
+  }
+
   function exportText(records, formatName) {
     const separator = formatName === "bibtex" ? "\n\n" : "\n\n";
     return records.map(record => citacoes.format(record, formatName)).join(separator).trim() + "\n";
@@ -403,14 +445,101 @@
     }
   }
 
+  function sameExternalUrl(first, second) {
+    return Boolean(first && second && first.replace(/\/$/, "") === second.replace(/\/$/, ""));
+  }
+
+  function officialLinks(record) {
+    const doi = bibField(record, "doi").replace(/^https?:\/\/(?:dx\.)?doi\.org\//i, "");
+    const doiUrl = doi ? safeExternalUrl(`https://doi.org/${doi}`) : "";
+    const bibUrl = safeExternalUrl(bibField(record, "url"));
+    const explicitPageUrl = safeExternalUrl(record.officialPageUrl);
+    const fullTextUrl = safeExternalUrl(record.officialFullTextUrl);
+    return {
+      doi,
+      doiUrl,
+      bibUrl,
+      explicitPageUrl,
+      pageUrl: explicitPageUrl || bibUrl,
+      fullTextUrl,
+      source: record.officialLinkSource || "",
+      sourceUrl: safeExternalUrl(record.officialLinkSourceUrl),
+      verifiedAt: record.officialLinkVerifiedAt || "",
+    };
+  }
+
+  function onlineAvailability(record) {
+    const links = officialLinks(record);
+    if (links.fullTextUrl) return { kind: "fulltext", label: "Leitura online" };
+    if (links.explicitPageUrl) return { kind: "page", label: "Página oficial" };
+    return null;
+  }
+
+  function quickPreviewMarkup(record) {
+    const authors = record.autores?.length ? record.autores.join("; ") : "Autoria não identificada";
+    const official = officialLinks(record);
+    const accessUrl = official.fullTextUrl || official.explicitPageUrl;
+    const accessLabel = official.fullTextUrl ? "Ler online ↗" : "Página oficial ↗";
+    const bibLabels = { verificado: "Verificado", estrutural: "Não verificado", pendente: "Pendente" };
+    return `
+      <div class="quick-preview__heading">
+        <div>
+          <p class="eyebrow">Ficha rápida</p>
+          <h3>${escapeHtml(record.titulo)}</h3>
+        </div>
+        <button class="quick-preview__close" type="button" data-preview-close aria-label="Fechar ficha rápida">×</button>
+      </div>
+      <p class="quick-preview__authors">${escapeHtml(authors)}</p>
+      <dl class="quick-preview__facts">
+        <div><dt>Tipo</dt><dd>${escapeHtml(record.tipo || "Não identificado")}</dd></div>
+        <div><dt>Ano</dt><dd>${escapeHtml(record.ano || "Não identificado")}</dd></div>
+        <div><dt>Páginas</dt><dd>${escapeHtml(record.paginas || "Não disponível")}</dd></div>
+        <div><dt>Qualidade</dt><dd>${escapeHtml(bibLabels[record.bibStatus] || "Pendente")}</dd></div>
+      </dl>
+      <div class="quick-preview__publication">
+        <span>Publicação</span>
+        <strong>${escapeHtml(record.publicacao || "Não identificada")}</strong>
+      </div>
+      <div class="quick-preview__actions">
+        ${accessUrl ? `<a class="button" href="${escapeHtml(accessUrl)}" target="_blank" rel="noreferrer">${accessLabel}</a>` : ""}
+        <button class="button button--quiet" type="button" data-open="${escapeHtml(record.id)}">Abrir ficha completa</button>
+      </div>
+      <p class="quick-preview__hint">A ficha completa reúne metadados, relações, citações e formatos bibliográficos.</p>`;
+  }
+
+  function closePreview() {
+    previewedId = "";
+    if (el.preview) {
+      el.preview.hidden = true;
+      el.preview.innerHTML = "";
+    }
+    el.resultsWorkspace?.classList.remove("results-workspace--preview");
+    document.querySelectorAll(".book-card--previewed").forEach(card => card.classList.remove("book-card--previewed"));
+  }
+
+  function openPreview(id) {
+    if (window.matchMedia("(max-width: 1180px)").matches) {
+      openDetails(id);
+      return;
+    }
+    const record = catalogo.find(item => item.id === id);
+    if (!record || !el.preview) return;
+    previewedId = id;
+    el.preview.innerHTML = quickPreviewMarkup(record);
+    el.preview.hidden = false;
+    el.resultsWorkspace?.classList.add("results-workspace--preview");
+    document.querySelectorAll(".book-card").forEach(card => {
+      card.classList.toggle("book-card--previewed", card.querySelector(`[data-preview="${CSS.escape(id)}"]`) !== null);
+    });
+  }
+
   function bibliographicRows(record) {
     const edition = bibField(record, "edition");
     const volume = bibField(record, "volume");
     const number = bibField(record, "number");
-    const doi = bibField(record, "doi");
     const isbn = bibField(record, "isbn");
     const eprint = bibField(record, "eprint");
-    const url = safeExternalUrl(bibField(record, "url"));
+    const links = officialLinks(record);
     const rows = [
       ["Ano", record.ano
         ? `<button class="metadata-filter" type="button" data-filter-year="${escapeHtml(record.ano)}">${escapeHtml(record.ano)}</button>`
@@ -422,13 +551,23 @@
     ];
     if (edition) rows.push(["Edição", escapeHtml(edition)]);
     if (volume || number) rows.push(["Volume / número", escapeHtml([volume, number].filter(Boolean).join(" / "))]);
-    if (doi) {
-      const doiUrl = safeExternalUrl(`https://doi.org/${doi}`);
-      rows.push(["DOI", doiUrl ? `<a class="metadata-link" href="${escapeHtml(doiUrl)}" target="_blank" rel="noreferrer">${escapeHtml(doi)}</a>` : escapeHtml(doi)]);
+    if (links.doi) {
+      rows.push(["DOI", links.doiUrl ? `<a class="metadata-link" href="${escapeHtml(links.doiUrl)}" target="_blank" rel="noreferrer">${escapeHtml(links.doi)}</a>` : escapeHtml(links.doi)]);
     }
     if (isbn) rows.push(["ISBN", escapeHtml(isbn)]);
     if (eprint) rows.push(["Identificador", escapeHtml(`arXiv:${eprint}`)]);
-    if (url) rows.push(["Página oficial", `<a class="metadata-link" href="${escapeHtml(url)}" target="_blank" rel="noreferrer">Abrir fonte</a>`]);
+    if (links.pageUrl && !sameExternalUrl(links.pageUrl, links.doiUrl)) {
+      rows.push(["Página oficial", `<a class="metadata-link" href="${escapeHtml(links.pageUrl)}" target="_blank" rel="noreferrer">Abrir fonte</a>`]);
+    }
+    if (links.fullTextUrl) {
+      rows.push(["Texto completo", `<a class="metadata-link" href="${escapeHtml(links.fullTextUrl)}" target="_blank" rel="noreferrer">Abrir acesso online</a>`]);
+    }
+    if (links.bibUrl
+      && !sameExternalUrl(links.bibUrl, links.pageUrl)
+      && !sameExternalUrl(links.bibUrl, links.fullTextUrl)
+      && !sameExternalUrl(links.bibUrl, links.doiUrl)) {
+      rows.push(["Link bibliográfico", `<a class="metadata-link" href="${escapeHtml(links.bibUrl)}" target="_blank" rel="noreferrer">Abrir referência</a>`]);
+    }
     return rows.map(([label, value]) => `<dt>${label}</dt><dd>${value}</dd>`).join("");
   }
 
@@ -496,6 +635,7 @@
     const networkScope = rede?.scopeLabel(record.id) || "";
     const affinity = afinidade?.summary(record.id) || { traceable: false, references: null, related: 0 };
     const bib = qualidade?.bibStatus(record) || { code: "estrutural", label: "Completo não verificado", detail: record.bibFonte || "" };
+    const official = officialLinks(record);
     const qualityIssues = (qualidade?.issues(record) || [])
       .filter(issue => !issue.startsWith("bib-"))
       .filter(issue => !["referencias-nao-detectadas", "afinidade-nao-calculavel"].includes(issue));
@@ -546,11 +686,11 @@
             <button type="button" data-copy-link>Copiar link</button>
           </div>
           <div class="detail-tabs" role="tablist" aria-label="Seções da ficha">
-            <button type="button" role="tab" data-detail-tab="ficha" aria-selected="true">Ficha</button>
-            <button type="button" role="tab" data-detail-tab="relacoes" aria-selected="false">Relacionados</button>
-            <button type="button" role="tab" data-detail-tab="citacao" aria-selected="false">Citação</button>
+            <button id="detalhes-tab-ficha" type="button" role="tab" data-detail-tab="ficha" aria-controls="detalhes-painel-ficha" aria-selected="true" tabindex="0">Ficha</button>
+            <button id="detalhes-tab-relacoes" type="button" role="tab" data-detail-tab="relacoes" aria-controls="detalhes-painel-relacoes" aria-selected="false" tabindex="-1">Relacionados</button>
+            <button id="detalhes-tab-citacao" type="button" role="tab" data-detail-tab="citacao" aria-controls="detalhes-painel-citacao" aria-selected="false" tabindex="-1">Citação</button>
           </div>
-          <div class="detail-panel" data-detail-panel="ficha">
+          <div id="detalhes-painel-ficha" class="detail-panel" role="tabpanel" aria-labelledby="detalhes-tab-ficha" data-detail-panel="ficha">
             <section class="detail-section detail-section--metadata" aria-labelledby="metadata-title">
               <div class="detail-section__heading">
                 <p class="eyebrow">Ficha catalográfica</p>
@@ -567,9 +707,10 @@
               </dl>
             </details>
             <div class="detail__actions"><span class="quality-inline">PDFs e notas ficam disponíveis apenas na biblioteca local.</span></div>
+            ${(official.fullTextUrl || official.explicitPageUrl) ? `<p class="official-link-evidence"><strong>Origem do acesso:</strong> ${official.sourceUrl ? `<a href="${escapeHtml(official.sourceUrl)}" target="_blank" rel="noreferrer"><strong>${escapeHtml(official.source || "fonte consultada")}</strong></a>` : `<strong>${escapeHtml(official.source || "fonte consultada")}</strong>`}${official.verifiedAt ? ` · verificado em ${escapeHtml(official.verifiedAt)}` : ""}.</p>` : ""}
             ${qualityIssues.length ? `<p class="quality-inline"><strong>Revisar:</strong> ${qualityIssues.map(issue => escapeHtml(qualidade.label(issue))).join(" · ")}</p>` : ""}
           </div>
-          <div class="detail-panel" data-detail-panel="relacoes" hidden>
+          <div id="detalhes-painel-relacoes" class="detail-panel" role="tabpanel" aria-labelledby="detalhes-tab-relacoes" data-detail-panel="relacoes" hidden>
             ${loadingContextMarkup()}
             ${hasNetworkRelations || hasAffinityRelations ? `
               <section class="detail-section relations-section" aria-labelledby="relations-title">
@@ -583,7 +724,7 @@
                 </div>
               </section>` : `<aside class="relation-empty"><div class="relation-empty__mark" aria-hidden="true">↔</div><div><p class="eyebrow">Relações confirmadas</p><h3>Nenhuma conexão local disponível</h3><p>${escapeHtml(relationEmptyMessage)}</p></div></aside>`}
           </div>
-          <div class="detail-panel" data-detail-panel="citacao" hidden>
+          <div id="detalhes-painel-citacao" class="detail-panel" role="tabpanel" aria-labelledby="detalhes-tab-citacao" data-detail-panel="citacao" hidden>
             <div class="bib-heading">
               <div>
                 <h3 data-citation-title>Referência em BibTeX</h3>
@@ -638,7 +779,9 @@
 
   function switchDetailTab(name) {
     el.conteudo.querySelectorAll("[data-detail-tab]").forEach(button => {
-      button.setAttribute("aria-selected", String(button.dataset.detailTab === name));
+      const selected = button.dataset.detailTab === name;
+      button.setAttribute("aria-selected", String(selected));
+      button.tabIndex = selected ? 0 : -1;
     });
     el.conteudo.querySelectorAll("[data-detail-panel]").forEach(panel => {
       panel.hidden = panel.dataset.detailPanel !== name;
@@ -903,6 +1046,12 @@
     el.qualidade.value = state.qualidade;
     el.ordenacao.value = ["titulo", "autor", "assunto", "ano-desc", "ano-asc"].includes(state.ordem) ? state.ordem : "titulo";
 
+    if (!["grid", "list", "table"].includes(layoutMode)) layoutMode = "grid";
+    document.querySelectorAll("[data-layout]").forEach(button => {
+      button.setAttribute("aria-pressed", String(button.dataset.layout === layoutMode));
+    });
+    updateDensity();
+
     document.querySelector("#total-documentos").textContent = `${catalogo.length} documentos`;
     document.querySelector("#total-assuntos").textContent = `${uniqueSorted(catalogo.map(item => item.assunto)).length} assuntos`;
     document.querySelector("#atualizado-em").textContent = meta.geradoEm
@@ -933,8 +1082,21 @@
   el.ano.addEventListener("change", () => render(true));
   el.qualidade.addEventListener("change", () => render(true));
   el.ordenacao.addEventListener("change", () => render(false));
+  el.alternarFiltros?.addEventListener("click", () => {
+    const expanded = el.alternarFiltros.getAttribute("aria-expanded") === "true";
+    el.alternarFiltros.setAttribute("aria-expanded", String(!expanded));
+    el.queryPanel?.classList.toggle("query-panel--filters-open", !expanded);
+    const total = el.ativos.children.length;
+    const label = expanded ? "Filtros" : "Ocultar filtros";
+    el.alternarFiltros.textContent = total ? `${label} (${total})` : label;
+  });
   el.limpar.addEventListener("click", clearAll);
   el.limparNav?.addEventListener("click", clearAll);
+  el.toggleDensity?.addEventListener("click", () => {
+    compactCards = !compactCards;
+    writePreference("ebib-density", compactCards ? "compact" : "comfortable");
+    updateDensity();
+  });
   el.mais.addEventListener("click", () => {
     limite += pageSize;
     render(false);
@@ -994,11 +1156,17 @@
     const layout = event.target.closest("[data-layout]");
     if (layout) {
       layoutMode = layout.dataset.layout;
+      writePreference("ebib-layout", layoutMode);
       document.querySelectorAll("[data-layout]").forEach(button => {
         button.setAttribute("aria-pressed", String(button === layout));
       });
       render(false);
     }
+
+    const preview = event.target.closest("[data-preview]");
+    if (preview) openPreview(preview.dataset.preview);
+
+    if (event.target.closest("[data-preview-close]")) closePreview();
 
     const open = event.target.closest("[data-open]");
     if (open) openDetails(open.dataset.open);
@@ -1185,6 +1353,20 @@
   });
 
   document.addEventListener("keydown", event => {
+    const detailTab = event.target.closest?.("[data-detail-tab]");
+    if (detailTab && ["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+      const tabs = [...el.conteudo.querySelectorAll("[data-detail-tab]")];
+      const current = tabs.indexOf(detailTab);
+      const next = event.key === "Home"
+        ? 0
+        : event.key === "End"
+          ? tabs.length - 1
+          : (current + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+      event.preventDefault();
+      switchDetailTab(tabs[next].dataset.detailTab);
+      tabs[next].focus();
+      return;
+    }
     if ((event.key === "Enter" || event.key === " ") && document.activeElement?.matches(".network-node")) {
       event.preventDefault();
       openNetwork(document.activeElement.dataset.networkNode, el.redeDialog.dataset.direction || "both");
@@ -1193,7 +1375,9 @@
       event.preventDefault();
       openAffinity(document.activeElement.dataset.affinityNode);
     }
-    if (event.key === "/" && document.activeElement !== el.busca && !document.querySelector("dialog[open]")) {
+    const active = document.activeElement;
+    const editing = active?.matches("input, select, textarea, [contenteditable='true']");
+    if (event.key === "/" && !editing && !document.querySelector("dialog[open]")) {
       event.preventDefault();
       el.busca.focus();
     }
