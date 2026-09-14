@@ -275,10 +275,13 @@
         <div class="book-card__button">
           <div class="cover-frame">
             ${coverMarkup(record)}
-            ${availability ? `<span class="book-card__online book-card__online--${availability.kind}">${escapeHtml(availability.label)}</span>` : ""}
+            ${availability ? `<span class="book-card__online book-card__online--cover book-card__online--${availability.kind}">${escapeHtml(availability.label)}</span>` : ""}
           </div>
           <div class="book-card__body">
-            <p class="book-card__subject">${escapeHtml(record.assunto)} · ${escapeHtml(record.subassunto)}</p>
+            <div class="book-card__classification">
+              <p class="book-card__subject">${escapeHtml(record.assunto)} · ${escapeHtml(record.subassunto)}</p>
+              ${availability ? `<span class="book-card__online-list book-card__online-list--${availability.kind}">${escapeHtml(availability.label)}</span>` : ""}
+            </div>
             <h3>${escapeHtml(record.titulo)}</h3>
             <p class="book-card__authors">${escapeHtml(authors)}</p>
             <p class="book-card__publication-line">${escapeHtml(record.publicacao || "Publicação não identificada")}</p>

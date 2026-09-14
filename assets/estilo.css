@@ -575,6 +575,10 @@ button.meta-chip:hover {
   background: rgba(69, 111, 140, 0.96);
 }
 
+.book-card__online-list {
+  display: none;
+}
+
 .cover-frame img {
   width: 100%;
   height: 100%;
@@ -4250,5 +4254,185 @@ body.compact-cards .book-card__publication-line {
 
   .detail-dialog[open] {
     width: 100%;
+  }
+}
+
+/* Modo lista */
+.catalog-grid.catalog-grid--list,
+body.compact-cards .catalog-grid.catalog-grid--list {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.7rem;
+}
+
+.catalog-grid--list .book-card {
+  height: auto;
+  min-height: 158px;
+}
+
+.catalog-grid--list .book-card__button,
+body.compact-cards .catalog-grid--list .book-card__button {
+  min-height: 158px;
+  grid-template-columns: 112px minmax(0, 1fr);
+  grid-template-rows: auto;
+}
+
+.catalog-grid--list .cover-frame,
+body.compact-cards .catalog-grid--list .cover-frame {
+  height: 100%;
+  min-height: 158px;
+  border-right: 3px solid var(--gold);
+  border-bottom: 0;
+}
+
+.catalog-grid--list .book-card__body,
+body.compact-cards .catalog-grid--list .book-card__body {
+  min-width: 0;
+  padding: 0.8rem 1rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(150px, 25%);
+  grid-template-areas:
+    "subject publication"
+    "title publication"
+    "authors publication"
+    "footer footer";
+  grid-template-rows: auto auto 1fr auto;
+  column-gap: 1.4rem;
+  align-content: start;
+}
+
+.catalog-grid--list .book-card__classification {
+  grid-area: subject;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.65rem;
+  min-width: 0;
+  margin-bottom: 0.3rem;
+}
+
+.catalog-grid--list .book-card__subject {
+  min-width: 0;
+  margin-bottom: 0;
+}
+
+.catalog-grid--list .book-card__online--cover {
+  display: none;
+}
+
+.catalog-grid--list .book-card__online-list {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  min-height: 1.45rem;
+  padding: 0.2rem 0.42rem;
+  color: white;
+  background: var(--forest);
+  border: 1px solid var(--gold);
+  font-family: var(--sans);
+  font-size: 0.58rem;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0.035em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.catalog-grid--list .book-card__online-list--page {
+  background: #456f8c;
+}
+
+.catalog-grid--list .book-card h3,
+body.compact-cards .catalog-grid--list .book-card h3 {
+  grid-area: title;
+  min-height: 0;
+  margin-bottom: 0.35rem;
+  font-size: 1.05rem;
+  -webkit-line-clamp: 2;
+}
+
+.catalog-grid--list .book-card__authors,
+body.compact-cards .catalog-grid--list .book-card__authors {
+  grid-area: authors;
+  min-height: 0;
+  margin-bottom: 0.45rem;
+  font-size: 0.75rem;
+  -webkit-line-clamp: 1;
+}
+
+.catalog-grid--list .book-card__publication-line,
+body.compact-cards .catalog-grid--list .book-card__publication-line {
+  grid-area: publication;
+  min-height: 0;
+  margin: 0;
+  padding-left: 0.9rem;
+  border-left: 1px solid var(--line);
+  font-size: 0.7rem;
+  -webkit-line-clamp: 4;
+}
+
+.catalog-grid--list .book-card__footer {
+  grid-area: footer;
+  min-width: 0;
+  margin-top: 0;
+}
+
+body.compact-cards .catalog-grid--list .book-card,
+body.compact-cards .catalog-grid--list .book-card__button,
+body.compact-cards .catalog-grid--list .cover-frame {
+  min-height: 132px;
+}
+
+body.compact-cards .catalog-grid--list .book-card__button {
+  grid-template-columns: 92px minmax(0, 1fr);
+}
+
+body.compact-cards .catalog-grid--list .book-card__body {
+  padding: 0.65rem 0.8rem;
+}
+
+body.compact-cards .catalog-grid--list .book-card h3 {
+  font-size: 0.94rem;
+}
+
+@media (max-width: 760px) {
+  .catalog-grid--list .book-card__body,
+  body.compact-cards .catalog-grid--list .book-card__body {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "subject"
+      "title"
+      "authors"
+      "publication"
+      "footer";
+    grid-template-rows: auto;
+  }
+
+  .catalog-grid--list .book-card__publication-line,
+  body.compact-cards .catalog-grid--list .book-card__publication-line {
+    margin-bottom: 0.45rem;
+    padding-left: 0;
+    border-left: 0;
+    -webkit-line-clamp: 1;
+  }
+}
+
+@media (max-width: 570px) {
+  .catalog-grid.catalog-grid--list,
+  body.compact-cards .catalog-grid.catalog-grid--list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .catalog-grid--list .book-card,
+  .catalog-grid--list .book-card__button,
+  .catalog-grid--list .cover-frame,
+  body.compact-cards .catalog-grid--list .book-card,
+  body.compact-cards .catalog-grid--list .book-card__button,
+  body.compact-cards .catalog-grid--list .cover-frame {
+    min-height: 142px;
+  }
+
+  .catalog-grid--list .book-card__button,
+  body.compact-cards .catalog-grid--list .book-card__button {
+    grid-template-columns: 86px minmax(0, 1fr);
   }
 }
