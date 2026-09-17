@@ -27,6 +27,19 @@
     "var(--dendrogram-cluster-8)",
   ];
 
+  function stableColorIndex(value) {
+    return [...normalize(value)].reduce(
+      (hash, character) => ((hash * 31) + character.charCodeAt(0)) >>> 0,
+      0
+    ) % clusterColors.length;
+  }
+
+  function collectionColor(collection) {
+    if (collection.unassigned) return "var(--muted)";
+    const subject = collection.subject?.value || collection.title || collection.code;
+    return clusterColors[stableColorIndex(subject)];
+  }
+
   function normalize(value) {
     return String(value || "")
       .normalize("NFD")
@@ -131,6 +144,7 @@
   }
 
   const referenceSimilarity = relationIndex(afinidade.edges, "similarity");
+  const sharedReferenceCount = relationIndex(afinidade.edges, "sharedReferences");
   const directCitation = relationIndex(redeGlobal.edges, "confidence", true);
   const traceable = new Set((afinidade.nodes || []).map(node => node.id));
 
@@ -513,13 +527,19 @@
         const related = collection.leaves
           .filter(other => other !== recordIndex)
           .sort((a, b) => model.distance[recordIndex][a] - model.distance[recordIndex][b])
-          .slice(0, 4)
-          .map(other => ({
-            id: model.records[other].id,
-            title: model.records[other].titulo,
-            similarity: 1 - model.distance[recordIndex][other],
-            reasons: pairReasons(record, model.records[other]),
-          }));
+          .slice(0, 5)
+          .map(other => {
+            const relatedRecord = model.records[other];
+            const relation = pairKey(record.id, relatedRecord.id);
+            return {
+              id: relatedRecord.id,
+              title: relatedRecord.titulo,
+              similarity: 1 - model.distance[recordIndex][other],
+              reasons: pairReasons(record, relatedRecord),
+              sharedReferences: sharedReferenceCount.get(relation) || 0,
+              directCitation: Boolean(directCitation.get(relation)),
+            };
+          });
         index.set(record.id, {
           status: "grouped",
           id: record.id,
@@ -549,6 +569,8 @@
           title: nearest.candidate.titulo,
           similarity: nearest.similarity,
           reasons: pairReasons(record, nearest.candidate),
+          sharedReferences: sharedReferenceCount.get(pairKey(record.id, nearest.candidate.id)) || 0,
+          directCitation: Boolean(directCitation.get(pairKey(record.id, nearest.candidate.id))),
         } : null,
       });
     });
@@ -561,9 +583,8 @@
     const representative = model.records[collection.representativeIndex];
     const examples = records.slice(0, 4);
     const extra = records.length - examples.length;
-    const colorIndex = Number(collection.code.slice(1)) - 1;
     return `
-      <article class="affinity-collection ${hidden ? "affinity-collection--hidden" : ""}" ${hidden ? "data-collection-secondary" : ""} style="--cluster-color:${clusterColors[colorIndex % clusterColors.length]}">
+      <article class="affinity-collection ${hidden ? "affinity-collection--hidden" : ""}" ${hidden ? "data-collection-secondary" : ""} style="--cluster-color:${collectionColor(collection)}">
         <div class="affinity-collection__heading">
           <span class="affinity-collection__code">${collection.code}</span>
           <span class="affinity-confidence affinity-confidence--${collection.level.code}">${collection.level.label}</span>
@@ -814,20 +835,47 @@
         <button class="button button--quiet" type="button" data-cluster-unassigned>Ver no catálogo</button>`;
     }
     const representative = model.records[collection.representativeIndex];
+    const subgroups = secondaryGroups(collection.leaves, model).filter(group =>
+      group.leaves.length > 1 && group.proximity >= minimumSimilarity + 0.08
+    );
+    const subgroupSummary = subgroups.length === 0
+      ? "nenhum subgrupo destacado"
+      : `${subgroups.length} ${subgroups.length === 1 ? "subgrupo destacado" : "subgrupos destacados"}`;
+    const examples = collection.leaves
+      .slice(0, 5)
+      .map(index => model.records[index]);
     return `
-      <p class="eyebrow">${escapeHtml(collection.code)} · ${escapeHtml(collection.level.label)}</p>
+      <p class="eyebrow">Coleção selecionada · ${escapeHtml(collection.level.label)}</p>
       <h4>${escapeHtml(collection.title)}</h4>
-      <p><strong>${collection.leaves.length} obras</strong> · proximidade local ${Math.round(collection.proximity * 100)}%.</p>
+      <p><strong>${collection.leaves.length} obras</strong> · coesão local ${Math.round(collection.proximity * 100)}% · ${subgroupSummary}.</p>
       <dl>
         <dt>Obra representativa</dt>
         <dd><button type="button" data-cluster-open="${escapeHtml(representative.id)}">${escapeHtml(representative.titulo)}</button></dd>
         <dt>Base observada</dt>
         <dd>${escapeHtml(collection.evidence.join(" · "))}</dd>
       </dl>
+      <div class="cluster-map__focus-works">
+        <strong>Obras em destaque</strong>
+        <ul>${examples.map(record => `<li><button type="button" data-cluster-open="${escapeHtml(record.id)}">${escapeHtml(record.titulo)}</button></li>`).join("")}</ul>
+      </div>
       <div class="cluster-map__focus-actions">
-        <button class="button" type="button" data-cluster-apply="${escapeHtml(collection.code)}">Ver no catálogo</button>
-        <button class="button button--quiet" type="button" data-cluster-select="${escapeHtml(collection.code)}">Selecionar coleção</button>
+        <button class="button" type="button" data-cluster-apply="${escapeHtml(collection.code)}">Aplicar como filtro</button>
+        <button class="button button--quiet" type="button" data-cluster-select="${escapeHtml(collection.code)}">Selecionar as obras</button>
       </div>`;
+  }
+
+  function mapOverviewMarkup(model, analysis) {
+    const grouped = analysis.collections.reduce((total, collection) => total + collection.leaves.length, 0);
+    return `
+      <p class="eyebrow">Visão geral</p>
+      <h4>Explore as coleções</h4>
+      <p><strong>${analysis.collections.length} coleções</strong> organizam ${grouped} das ${model.records.length} obras deste recorte.</p>
+      <dl>
+        <dt>Como começar</dt>
+        <dd>Selecione um contorno ou pesquise uma obra. O mapa revelará os documentos somente dentro da coleção escolhida.</dd>
+        <dt>Leitura visual</dt>
+        <dd>O tamanho representa a quantidade de obras; a cor identifica o assunto dominante; a espessura do contorno acompanha a coesão.</dd>
+      </dl>`;
   }
 
   function renderClusterMap(model, analysis, elements) {
@@ -845,6 +893,12 @@
         unassigned: true,
       }] : []),
     ];
+    const collectionByRecord = new Map();
+    collections.forEach(collection => {
+      collection.leaves.forEach(index => {
+        collectionByRecord.set(model.records[index].id, collection);
+      });
+    });
     const packed = packCircles(
       collections.map(collection => ({ key: collection.code, weight: collection.leaves.length, collection })),
       outerRadius - 18,
@@ -881,7 +935,11 @@
         "data-cluster-map": collection.code,
         "aria-label": `${collection.title}, ${collection.leaves.length} obras. Selecionar e ampliar grupo.`,
       });
-      group.style.setProperty("--cluster-color", clusterColors[collectionIndex % clusterColors.length]);
+      group.style.setProperty("--cluster-color", collectionColor(collection));
+      group.style.setProperty(
+        "--cluster-stroke-width",
+        collection.unassigned ? "1.8" : String(1.5 + Math.min(1, collection.proximity || 0) * 2.6)
+      );
       const shape = svgElement("circle", {
         cx: item.x,
         cy: item.y,
@@ -950,32 +1008,63 @@
       });
 
       if (hasLabel) {
-        const labelText = `${collection.code} · ${collection.leaves.length}`;
-        const labelWidth = Math.min(Math.max(56, labelText.length * 6.2), item.radius * 1.55);
+        const characterLimit = Math.max(11, Math.min(25, Math.floor(item.radius / 4.5)));
+        const titleLines = wrapTitle(collection.title, characterLimit, item.radius >= 58 ? 2 : 1);
+        const longestLine = Math.max(...titleLines.map(line => line.length), 8);
+        const labelWidth = Math.min(Math.max(70, longestLine * 6.4 + 18), item.radius * 1.72);
+        const labelHeight = titleLines.length * 14 + 22;
         const labelY = item.y - item.radius * 0.48;
         group.append(svgElement("rect", {
           x: item.x - labelWidth / 2,
-          y: labelY - 13,
+          y: labelY - 15,
           width: labelWidth,
-          height: 26,
+          height: labelHeight,
           class: "cluster-map__label-box",
         }));
         const label = svgElement("text", {
           x: item.x,
-          y: labelY + 4,
+          y: labelY,
           class: "cluster-map__label",
           "text-anchor": "middle",
         });
-        label.textContent = labelText;
+        titleLines.forEach((line, lineIndex) => {
+          const part = svgElement("tspan", {
+            x: item.x,
+            dy: lineIndex ? "1.15em" : "0",
+          });
+          part.textContent = line;
+          label.append(part);
+        });
+        const count = svgElement("tspan", {
+          x: item.x,
+          dy: "1.35em",
+          class: "cluster-map__label-count",
+        });
+        count.textContent = `${collection.leaves.length} ${collection.leaves.length === 1 ? "obra" : "obras"}`;
+        label.append(count);
         group.append(label);
       }
       svg.append(group);
     });
 
+    let level = "collections";
+    const setLevel = nextLevel => {
+      level = nextLevel === "documents" ? "documents" : "collections";
+      elements.chart.classList.toggle("cluster-map__chart--hide-documents", level === "collections");
+      elements.levels?.querySelectorAll("[data-cluster-map-level]").forEach(button => {
+        button.setAttribute("aria-pressed", String(button.dataset.clusterMapLevel === level));
+      });
+    };
+    const clearDocumentHighlight = () => {
+      svg.querySelectorAll(".cluster-map__document--located").forEach(node => {
+        node.classList.remove("cluster-map__document--located");
+      });
+    };
     const select = (code, zoom = true) => {
       const collection = collections.find(item => item.code === code);
       const bound = bounds.get(code);
       if (!collection || !bound) return;
+      clearDocumentHighlight();
       svg.querySelectorAll("[data-cluster-map]").forEach(group => {
         group.classList.toggle("cluster-map__collection--selected", group.dataset.clusterMap === code);
       });
@@ -983,6 +1072,13 @@
         button.setAttribute("aria-pressed", String(button.dataset.clusterMapChoice === code));
       });
       elements.focus.innerHTML = mapFocusMarkup(collection, model);
+      elements.chart.classList.remove("cluster-map__chart--overview");
+      elements.chart.classList.add("cluster-map__chart--focused");
+      setLevel("documents");
+      if (elements.breadcrumbCurrent) {
+        elements.breadcrumbCurrent.hidden = false;
+        elements.breadcrumbCurrent.textContent = collection.title;
+      }
       if (zoom) {
         const margin = Math.max(16, bound.radius * 0.18);
         const size = (bound.radius + margin) * 2;
@@ -990,13 +1086,40 @@
         elements.reset.hidden = false;
       }
     };
+    const selectRecord = id => {
+      const collection = collectionByRecord.get(id);
+      if (!collection) return false;
+      select(collection.code);
+      const node = svg.querySelector(`[data-cluster-map-document="${CSS.escape(id)}"]`);
+      node?.classList.add("cluster-map__document--located");
+      const record = model.records.find(item => item.id === id);
+      if (record && elements.searchStatus) {
+        elements.searchStatus.textContent = `${record.titulo} localizado em ${collection.title}.`;
+      }
+      return true;
+    };
     const reset = () => {
       svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
       elements.reset.hidden = true;
+      clearDocumentHighlight();
+      svg.querySelectorAll("[data-cluster-map]").forEach(group => {
+        group.classList.remove("cluster-map__collection--selected");
+      });
+      elements.choices?.querySelectorAll("[data-cluster-map-choice]").forEach(button => {
+        button.setAttribute("aria-pressed", "false");
+      });
+      elements.chart.classList.remove("cluster-map__chart--focused");
+      elements.chart.classList.add("cluster-map__chart--overview");
+      setLevel("collections");
+      elements.focus.innerHTML = mapOverviewMarkup(model, analysis);
+      if (elements.breadcrumbCurrent) {
+        elements.breadcrumbCurrent.hidden = true;
+        elements.breadcrumbCurrent.textContent = "";
+      }
+      if (elements.searchStatus) elements.searchStatus.textContent = "";
     };
-    const initialCode = analysis.collections[0]?.code || (analysis.unassigned.length ? "U" : "");
-    if (initialCode) select(initialCode, false);
-    return { select, reset };
+    reset();
+    return { select, selectRecord, reset, setLevel };
   }
 
   function mount(container, records, options = {}) {
@@ -1021,12 +1144,12 @@
           collectionCard(collection, model, index >= initialCollectionLimit)
         ).join("");
         const mapChoices = analysis.collections.slice(0, initialCollectionLimit).map((collection, index) => `
-          <button class="cluster-map__choice" type="button" data-cluster-map-choice="${escapeHtml(collection.code)}" aria-pressed="${index === 0}">
-            <strong>${escapeHtml(collection.code)} · ${escapeHtml(collection.title)}</strong>
-            <span>${collection.leaves.length} obras · ${Math.round(collection.proximity * 100)}% de proximidade local</span>
+          <button class="cluster-map__choice" type="button" data-cluster-map-choice="${escapeHtml(collection.code)}" aria-pressed="false" style="--cluster-color:${collectionColor(collection)}">
+            <strong>${escapeHtml(collection.title)}</strong>
+            <span>${collection.leaves.length} obras · ${Math.round(collection.proximity * 100)}% de coesão · ${escapeHtml(collection.code)}</span>
           </button>`).join("") + (analysis.unassigned.length ? `
-          <button class="cluster-map__choice" type="button" data-cluster-map-choice="U" aria-pressed="${analysis.collections.length === 0}">
-            <strong>U · Sem vínculo confiável</strong>
+          <button class="cluster-map__choice" type="button" data-cluster-map-choice="U" aria-pressed="false">
+            <strong>Sem vínculo confiável</strong>
             <span>${analysis.unassigned.length} obras preservadas fora das coleções</span>
           </button>` : "");
         container.innerHTML = `
@@ -1053,10 +1176,26 @@
               <div>
                 <p class="eyebrow">Hierarquia navegável</p>
                 <h3 id="cluster-map-title">Mapa das coleções</h3>
-                <p>Pontos são obras; contornos representam coleções e subdivisões mais coesas. Selecione um contorno para ampliar.</p>
+                <p>Comece pelos assuntos, pesquise uma obra ou selecione uma coleção para revelar seus documentos.</p>
               </div>
-              <button id="cluster-map-reset" class="button button--quiet" type="button" hidden>Ver mapa completo</button>
+              <button id="cluster-map-reset" class="button button--quiet" type="button" hidden>Redefinir mapa</button>
             </div>
+            <div class="cluster-map__toolbar">
+              <div class="cluster-map__search">
+                <label for="cluster-map-search">Buscar obra ou coleção</label>
+                <input id="cluster-map-search" type="search" autocomplete="off" placeholder="Título, autor, assunto ou coleção">
+                <div id="cluster-map-search-results" class="cluster-map__search-results" hidden></div>
+              </div>
+              <div id="cluster-map-levels" class="cluster-map__levels" role="group" aria-label="Nível de detalhe do mapa">
+                <button type="button" data-cluster-map-level="collections" aria-pressed="true">Coleções</button>
+                <button type="button" data-cluster-map-level="documents" aria-pressed="false">Coleções e obras</button>
+              </div>
+            </div>
+            <nav class="cluster-map__breadcrumb" aria-label="Localização no mapa">
+              <button type="button" data-cluster-map-home>Todas as coleções</button>
+              <span id="cluster-map-breadcrumb-current" hidden></span>
+            </nav>
+            <p id="cluster-map-search-status" class="cluster-map__search-status" role="status" aria-live="polite"></p>
             <div class="cluster-map__layout">
               <div id="cluster-map-chart" class="cluster-map__chart">
                 <svg role="img" aria-labelledby="cluster-map-title"></svg>
@@ -1065,9 +1204,11 @@
             </div>
             <div id="cluster-map-choices" class="cluster-map__choices" aria-label="Selecionar uma coleção no mapa">${mapChoices}</div>
             <div class="cluster-map__legend" aria-label="Legenda do mapa">
-              <span><i class="cluster-map__legend-dot" aria-hidden="true"></i> Obra</span>
-              <span><i class="cluster-map__legend-contour" aria-hidden="true"></i> Coleção</span>
-              <span><i class="cluster-map__legend-contour cluster-map__legend-contour--inner" aria-hidden="true"></i> Subgrupo com afinidade mais forte</span>
+              <span><i class="cluster-map__legend-size" aria-hidden="true"></i> Tamanho: número de obras</span>
+              <span><i class="cluster-map__legend-color" aria-hidden="true"></i> Cor: assunto dominante</span>
+              <span><i class="cluster-map__legend-contour" aria-hidden="true"></i> Contorno: coesão</span>
+              <span><i class="cluster-map__legend-dot" aria-hidden="true"></i> Ponto: obra</span>
+              <span><i class="cluster-map__legend-contour cluster-map__legend-contour--inner" aria-hidden="true"></i> Contorno interno: subgrupo</span>
             </div>
           </section>
           <div class="affinity-collections__heading">
@@ -1117,9 +1258,82 @@
           focus: container.querySelector("#cluster-map-focus"),
           reset: container.querySelector("#cluster-map-reset"),
           choices: container.querySelector("#cluster-map-choices"),
+          search: container.querySelector("#cluster-map-search"),
+          searchResults: container.querySelector("#cluster-map-search-results"),
+          searchStatus: container.querySelector("#cluster-map-search-status"),
+          levels: container.querySelector("#cluster-map-levels"),
+          breadcrumbCurrent: container.querySelector("#cluster-map-breadcrumb-current"),
         };
         const clusterMap = renderClusterMap(model, analysis, mapElements);
         mapElements.reset.addEventListener("click", clusterMap.reset);
+        const collectionByRecord = new Map();
+        analysis.collections.forEach(collection => {
+          collection.leaves.forEach(index => collectionByRecord.set(model.records[index].id, collection));
+        });
+        const searchableRecords = model.records.map(record => {
+          const collection = collectionByRecord.get(record.id);
+          return {
+            record,
+            collection,
+            haystack: normalize([
+              record.titulo,
+              (record.autores || []).join(" "),
+              record.assunto,
+              record.subassunto,
+              collection?.title,
+            ].filter(Boolean).join(" ")),
+          };
+        });
+        const updateMapSearch = () => {
+          const query = normalize(mapElements.search.value);
+          if (query.length < 2) {
+            mapElements.searchResults.hidden = true;
+            mapElements.searchResults.innerHTML = "";
+            mapElements.searchStatus.textContent = "";
+            return;
+          }
+          const queryTerms = query.split(" ").filter(Boolean);
+          const collectionMatches = analysis.collections
+            .filter(collection => queryTerms.every(term => normalize(collection.title).includes(term)))
+            .slice(0, 3);
+          const documentMatches = searchableRecords
+            .filter(item => queryTerms.every(term => item.haystack.includes(term)))
+            .slice(0, Math.max(3, 8 - collectionMatches.length));
+          const results = [
+            ...collectionMatches.map(collection => `
+              <button type="button" data-cluster-search-collection="${escapeHtml(collection.code)}">
+                <strong>${escapeHtml(collection.title)}</strong>
+                <span>Coleção · ${collection.leaves.length} obras</span>
+              </button>`),
+            ...documentMatches.map(item => `
+              <button type="button" data-cluster-search-result="${escapeHtml(item.record.id)}">
+                <strong>${escapeHtml(item.record.titulo)}</strong>
+                <span>${escapeHtml(item.collection?.title || "Sem coleção confiável")} · ${escapeHtml(item.record.assunto || "Sem assunto")}</span>
+              </button>`),
+          ];
+          mapElements.searchResults.innerHTML = results.length
+            ? results.join("")
+            : `<p>Nenhuma obra ou coleção encontrada.</p>`;
+          mapElements.searchResults.hidden = false;
+          mapElements.searchStatus.textContent = results.length
+            ? `${collectionMatches.length + documentMatches.length} resultados disponíveis.`
+            : "Nenhum resultado encontrado.";
+        };
+        mapElements.search.addEventListener("input", updateMapSearch);
+        mapElements.search.addEventListener("keydown", event => {
+          if (event.key === "Enter") {
+            const firstResult = mapElements.searchResults.querySelector("button");
+            if (firstResult) {
+              event.preventDefault();
+              firstResult.click();
+            }
+          }
+          if (event.key === "Escape") {
+            mapElements.search.value = "";
+            updateMapSearch();
+            clusterMap.reset();
+          }
+        });
         const update = () => renderTree(model, Number(elements.cut.value), elements);
         elements.cut.addEventListener("input", update);
         elements.suggested.addEventListener("click", () => {
@@ -1150,6 +1364,31 @@
           showAll.textContent = expanded ? `Mostrar todas as ${analysis.collections.length} coleções` : "Mostrar somente as prioritárias";
         });
         container.onclick = event => {
+          if (!event.target.closest(".cluster-map__search")) {
+            mapElements.searchResults.hidden = true;
+          }
+          const home = event.target.closest("[data-cluster-map-home]");
+          if (home) {
+            clusterMap.reset();
+            return;
+          }
+          const level = event.target.closest("[data-cluster-map-level]");
+          if (level) {
+            clusterMap.setLevel(level.dataset.clusterMapLevel);
+            return;
+          }
+          const searchCollection = event.target.closest("[data-cluster-search-collection]");
+          if (searchCollection) {
+            clusterMap.select(searchCollection.dataset.clusterSearchCollection);
+            mapElements.searchResults.hidden = true;
+            return;
+          }
+          const searchResult = event.target.closest("[data-cluster-search-result]");
+          if (searchResult) {
+            clusterMap.selectRecord(searchResult.dataset.clusterSearchResult);
+            mapElements.searchResults.hidden = true;
+            return;
+          }
           const mapDocument = event.target.closest("[data-cluster-map-document]");
           if (mapDocument) {
             document.dispatchEvent(new CustomEvent("catalogo:open-details", { detail: { id: mapDocument.dataset.clusterMapDocument } }));
@@ -1177,7 +1416,7 @@
             document.dispatchEvent(new CustomEvent("catalogo:apply-cluster", {
               detail: {
                 ids: collection.leaves.map(index => model.records[index].id),
-                label: `${collection.code} · ${collection.title}`,
+                label: collection.title,
               },
             }));
             return;
@@ -1189,7 +1428,7 @@
             document.dispatchEvent(new CustomEvent("catalogo:select-cluster", {
               detail: {
                 ids: collection.leaves.map(index => model.records[index].id),
-                label: `${collection.code} · ${collection.title}`,
+                label: collection.title,
               },
             }));
             return;
@@ -1227,6 +1466,11 @@
             clusterMap.select(collectionNode.dataset.clusterMap);
           }
         });
+        container.onkeydown = event => {
+          if (event.key === "Escape" && event.target !== mapElements.search) {
+            clusterMap.reset();
+          }
+        };
       } catch (error) {
         container.innerHTML = `
           <header class="dendrogram-header"><p class="eyebrow">Organização por afinidade</p><h2>Coleções sugeridas</h2></header>

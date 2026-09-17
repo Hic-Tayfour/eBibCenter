@@ -19,6 +19,8 @@
     "bib-estrutural": "Bib completo não verificado",
     "bib-pendente": "Bib pendente",
     "duplicata-provavel": "Duplicata provável",
+    "com-sumario": "Tem sumário",
+    "sem-sumario": "Sem sumário",
   };
 
   function normalize(value) {
@@ -91,6 +93,8 @@
   }
 
   function matches(record, code) {
+    if (code === "com-sumario") return Array.isArray(record.sumario) && record.sumario.length > 0;
+    if (code === "sem-sumario") return !Array.isArray(record.sumario) || record.sumario.length === 0;
     return !code || issues(record).includes(code);
   }
 
@@ -122,6 +126,18 @@
         <button type="button" data-quality-filter="bib-verificado"><strong>${verified}</strong><span>Bib verificado</span><small>Conferido por serviço ou fonte externa indicada</small></button>
         <button type="button" data-quality-filter="bib-estrutural"><strong>${structural}</strong><span>Completo não verificado</span><small>Estrutura válida, ainda baseada na bibliografia local</small></button>
         <button type="button" data-quality-filter="bib-pendente"><strong>${pending}</strong><span>Bib pendente</span><small>Falta pelo menos um campo essencial</small></button>
+      </section>
+      <section class="quality-grid quality-grid--summary" aria-label="Cobertura dos sumários">
+        <button type="button" class="quality-card" data-quality-filter="com-sumario">
+          <strong>${count("com-sumario")}</strong>
+          <span>${escapeHtml(labels["com-sumario"])}</span>
+          <small>Documentos com estrutura de seções disponível na ficha e na busca.</small>
+        </button>
+        <button type="button" class="quality-card" data-quality-filter="sem-sumario">
+          <strong>${count("sem-sumario")}</strong>
+          <span>${escapeHtml(labels["sem-sumario"])}</span>
+          <small>Documentos ainda sem sumário transcrito na nota Markdown.</small>
+        </button>
       </section>
       <section class="quality-grid" aria-label="Pendências técnicas">
         ${issueCards.map(([code, description]) => `

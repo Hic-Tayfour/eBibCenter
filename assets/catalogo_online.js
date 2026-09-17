@@ -586,6 +586,14 @@
     }
     if (context.status === "unassigned") {
       const nearest = context.nearest;
+      const nearestEvidence = nearest
+        ? [
+          nearest.sharedReferences
+            ? `${nearest.sharedReferences} ${nearest.sharedReferences === 1 ? "referência compartilhada" : "referências compartilhadas"}`
+            : "",
+          nearest.directCitation ? "citação local direta" : "",
+        ].filter(Boolean).join(" · ")
+        : "";
       return `
         <section class="library-context library-context--empty" data-library-context>
           <div class="library-context__heading">
@@ -593,9 +601,27 @@
             <span class="affinity-confidence affinity-confidence--exploratoria">Não agrupada</span>
           </div>
           <p>O sistema preservou esta obra fora das coleções porque nenhum vínculo ultrapassou o limiar mínimo de 25% dentro do corte sugerido.</p>
-          ${nearest ? `<p class="library-context__nearest"><strong>Candidato mais próximo:</strong> <button type="button" data-open="${escapeHtml(nearest.id)}">${escapeHtml(nearest.title)}</button> · ${Math.round(nearest.similarity * 100)}% · ${escapeHtml(nearest.reasons.join(", "))}</p>` : ""}
+          ${nearest ? `<div class="library-context__nearest"><strong>Candidato mais próximo</strong><button type="button" data-open="${escapeHtml(nearest.id)}">${escapeHtml(nearest.title)}</button><span>${Math.round(nearest.similarity * 100)}% · ${escapeHtml(nearest.reasons.join(", "))}</span>${nearestEvidence ? `<small>${escapeHtml(nearestEvidence)}</small>` : ""}</div>` : ""}
         </section>`;
     }
+    const related = context.related.map((item, index) => {
+      const evidence = [
+        item.sharedReferences
+          ? `${item.sharedReferences} ${item.sharedReferences === 1 ? "referência compartilhada" : "referências compartilhadas"}`
+          : "",
+        item.directCitation ? "citação local direta" : "",
+      ].filter(Boolean).join(" · ");
+      return `
+        <li class="relation-card">
+          <span class="relation-card__rank" aria-hidden="true">${index + 1}</span>
+          <div class="relation-card__body">
+            <button type="button" data-open="${escapeHtml(item.id)}">${escapeHtml(item.title)}</button>
+            <span>${escapeHtml(item.reasons.join(" · "))}</span>
+            <small>${escapeHtml(evidence || "proximidade sustentada pelos metadados da biblioteca")}</small>
+          </div>
+          <strong class="relation-card__score" aria-label="${Math.round(item.similarity * 100)} por cento de afinidade">${Math.round(item.similarity * 100)}%</strong>
+        </li>`;
+    }).join("");
     return `
       <section class="library-context" data-library-context>
         <div class="library-context__heading">
@@ -604,18 +630,12 @@
         </div>
         <div class="library-context__summary">
           <div><span>Vínculo mais forte</span><strong>${Math.round(context.proximity * 100)}%</strong></div>
-          <p>${context.size} obras nesta coleção · representante: <button type="button" data-open="${escapeHtml(context.representative.id)}">${escapeHtml(context.representative.titulo)}</button></p>
+          <p><span>Coleção hierárquica</span><strong>${escapeHtml(context.code)} · ${escapeHtml(context.title)}</strong><small>${context.size} obras · representante: <button type="button" data-open="${escapeHtml(context.representative.id)}">${escapeHtml(context.representative.titulo)}</button></small></p>
         </div>
         <p class="library-context__evidence"><strong>Base observada:</strong> ${escapeHtml(context.evidence.join(" · "))}</p>
         <div class="library-context__related">
-          <h4>Obras mais próximas</h4>
-          <ol>
-            ${context.related.map(item => `
-              <li>
-                <button type="button" data-open="${escapeHtml(item.id)}">${escapeHtml(item.title)}</button>
-                <span>${Math.round(item.similarity * 100)}% · ${escapeHtml(item.reasons.join(", "))}</span>
-              </li>`).join("")}
-          </ol>
+          <div class="library-context__related-heading"><h4>Obras mais próximas</h4><span>até 5 resultados</span></div>
+          <ol>${related}</ol>
         </div>
         <div class="library-context__footer">
           <p>Indicador comparativo local; não representa probabilidade nem comprovação bibliográfica.</p>
@@ -633,20 +653,20 @@
   }
 
   function tocMarkup(record, entries) {
-    const canOpenPdf = Boolean(window.VisualizadorPDF);
     return `
       <section class="detail-section document-toc-section" aria-labelledby="document-toc-title">
         <div class="detail-section__heading">
           <p class="eyebrow">Estrutura do documento</p>
           <h3 id="document-toc-title">Sumário</h3>
         </div>
-        <p class="document-toc__intro">${entries.length} ${entries.length === 1 ? "seção transcrita" : "seções transcritas"} da nota Markdown.${canOpenPdf ? " Selecione uma seção para abrir a página correspondente." : ""}</p>
+        <p class="document-toc__intro">${entries.length} ${entries.length === 1 ? "seção transcrita" : "seções transcritas"} da nota Markdown.</p>
         <ol class="document-toc">
           ${entries.map(item => {
             const level = Math.max(1, Math.min(4, Number(item.nivel) || 1));
-            const page = Math.max(1, Number(item.pagina) || 1);
-            const content = `<span class="document-toc__title">${escapeHtml(item.titulo)}</span><span class="document-toc__page">p. ${page}</span>`;
-            return `<li class="document-toc__item document-toc__item--level-${level}">${canOpenPdf ? `<button type="button" data-toc-open="${escapeHtml(record.id)}" data-page="${page}">${content}</button>` : `<div>${content}</div>`}</li>`;
+            const pageValue = Number(item.pagina);
+            const page = Number.isFinite(pageValue) && pageValue > 0 ? Math.floor(pageValue) : null;
+            const content = `<span class="document-toc__title">${escapeHtml(item.titulo)}</span>${page ? `<span class="document-toc__page">p. ${page}</span>` : ""}`;
+            return `<li class="document-toc__item document-toc__item--level-${level}"><div>${content}</div></li>`;
           }).join("")}
         </ol>
       </section>`;
@@ -674,6 +694,7 @@
       : affinity.message || "Não foi possível calcular afinidade por referências compartilhadas.";
     const hasNetworkRelations = networkInScope && network.total > 0;
     const hasAffinityRelations = affinity.available && affinity.traceable && affinity.related > 0;
+    const relationCount = Math.max(network.total || 0, affinity.related || 0);
     const relationEmptyMessage = network.bibliographyState === "not_found"
       ? "Nenhuma relação por citações foi confirmada. O extrator não detectou uma seção bibliográfica formal neste PDF; isso pode ser normal para este tipo de material."
       : affinity.traceable
@@ -705,6 +726,13 @@
             <span class="meta-chip">${escapeHtml(record.tipo)}</span>
             <span class="meta-chip bib-state bib-state--${escapeHtml(bib.code)}">${escapeHtml(bib.label)}</span>
           </div>
+          <div class="detail__actions detail__actions--primary" aria-label="Ações principais do documento">
+            ${official.fullTextUrl ? `<a class="official-action official-action--fulltext" href="${escapeHtml(official.fullTextUrl)}" target="_blank" rel="noreferrer">Ler online ↗</a>` : ""}
+            ${official.explicitPageUrl && !sameExternalUrl(official.explicitPageUrl, official.fullTextUrl) ? `<a class="official-action official-action--page" href="${escapeHtml(official.explicitPageUrl)}" target="_blank" rel="noreferrer">Página oficial ↗</a>` : ""}
+            <button class="button button--quiet" type="button" data-switch-detail="citacao">BibTeX</button>
+
+          </div>
+          ${(official.fullTextUrl || official.explicitPageUrl) ? `<p class="official-link-evidence"><strong>Origem do acesso:</strong> ${official.sourceUrl ? `<a href="${escapeHtml(official.sourceUrl)}" target="_blank" rel="noreferrer"><strong>${escapeHtml(official.source || "fonte consultada")}</strong></a>` : `<strong>${escapeHtml(official.source || "fonte consultada")}</strong>`}${official.verifiedAt ? ` · verificado em ${escapeHtml(official.verifiedAt)}` : ""}.</p>` : ""}
           <div class="detail-navigation" aria-label="Navegação entre documentos">
             <button type="button" data-detail-prev="${escapeHtml(previous?.id || "")}" ${previous ? "" : "disabled"}>← Anterior</button>
             <span>${position >= 0 ? position + 1 : 1} de ${sequence.length}</span>
@@ -712,10 +740,11 @@
             <button type="button" data-copy-link>Copiar link</button>
           </div>
           <div class="detail-tabs" role="tablist" aria-label="Seções da ficha">
-            <button id="detalhes-tab-ficha" type="button" role="tab" data-detail-tab="ficha" aria-controls="detalhes-painel-ficha" aria-selected="true" tabindex="0">Ficha</button>
+            <button id="detalhes-tab-ficha" type="button" role="tab" data-detail-tab="ficha" aria-controls="detalhes-painel-ficha" aria-selected="true" tabindex="0">Identificação</button>
             ${toc.length ? `<button id="detalhes-tab-sumario" type="button" role="tab" data-detail-tab="sumario" aria-controls="detalhes-painel-sumario" aria-selected="false" tabindex="-1">Sumário <span>${toc.length}</span></button>` : ""}
-            <button id="detalhes-tab-relacoes" type="button" role="tab" data-detail-tab="relacoes" aria-controls="detalhes-painel-relacoes" aria-selected="false" tabindex="-1">Relacionados</button>
+            <button id="detalhes-tab-relacoes" type="button" role="tab" data-detail-tab="relacoes" aria-controls="detalhes-painel-relacoes" aria-selected="false" tabindex="-1">Relacionados${relationCount ? ` <span>${relationCount}</span>` : ""}</button>
             <button id="detalhes-tab-citacao" type="button" role="tab" data-detail-tab="citacao" aria-controls="detalhes-painel-citacao" aria-selected="false" tabindex="-1">Citação</button>
+            <button id="detalhes-tab-arquivo" type="button" role="tab" data-detail-tab="arquivo" aria-controls="detalhes-painel-arquivo" aria-selected="false" tabindex="-1">Arquivo</button>
           </div>
           <div id="detalhes-painel-ficha" class="detail-panel" role="tabpanel" aria-labelledby="detalhes-tab-ficha" data-detail-panel="ficha">
             <section class="detail-section detail-section--metadata" aria-labelledby="metadata-title">
@@ -726,15 +755,6 @@
               <dl class="metadata">${bibliographicRows(record)}</dl>
             </section>
             ${abstract ? `<section class="detail-section detail-abstract"><div class="detail-section__heading"><p class="eyebrow">Conteúdo</p><h3>Resumo</h3></div><p>${escapeHtml(abstract)}</p></section>` : ""}
-            <details class="file-details">
-              <summary>Arquivo, localização e tags</summary>
-              <dl class="metadata metadata--technical">
-                <dt>Arquivo</dt><dd>${escapeHtml(record.nomeArquivo)}</dd>
-                <dt>Tags</dt><dd>${escapeHtml((record.tags || []).join(", ") || "Sem tags")}</dd>
-              </dl>
-            </details>
-            <div class="detail__actions"><span class="quality-inline">PDFs e notas ficam disponíveis apenas na biblioteca local.</span></div>
-            ${(official.fullTextUrl || official.explicitPageUrl) ? `<p class="official-link-evidence"><strong>Origem do acesso:</strong> ${official.sourceUrl ? `<a href="${escapeHtml(official.sourceUrl)}" target="_blank" rel="noreferrer"><strong>${escapeHtml(official.source || "fonte consultada")}</strong></a>` : `<strong>${escapeHtml(official.source || "fonte consultada")}</strong>`}${official.verifiedAt ? ` · verificado em ${escapeHtml(official.verifiedAt)}` : ""}.</p>` : ""}
             ${qualityIssues.length ? `<p class="quality-inline"><strong>Revisar:</strong> ${qualityIssues.map(issue => escapeHtml(qualidade.label(issue))).join(" · ")}</p>` : ""}
           </div>
           ${toc.length ? `<div id="detalhes-painel-sumario" class="detail-panel" role="tabpanel" aria-labelledby="detalhes-tab-sumario" data-detail-panel="sumario" hidden>${tocMarkup(record, toc)}</div>` : ""}
@@ -772,6 +792,20 @@
             </div>
             <pre class="bibtex"><code data-citation-output>${escapeHtml(citacoes.format(record, "bibtex"))}</code></pre>
             ${missing.length ? `<p class="bib-warning">Registro mínimo. Campos ainda ausentes: ${escapeHtml(missing.join(", "))}.</p>` : ""}
+          </div>
+          <div id="detalhes-painel-arquivo" class="detail-panel" role="tabpanel" aria-labelledby="detalhes-tab-arquivo" data-detail-panel="arquivo" hidden>
+            <section class="detail-section detail-technical" aria-labelledby="technical-title">
+              <div class="detail-section__heading"><p class="eyebrow">Informações técnicas</p><h3 id="technical-title">Arquivo e organização local</h3></div>
+              <p class="detail-technical__intro">Dados operacionais separados da identificação bibliográfica.</p>
+              <dl class="metadata metadata--technical">
+                <dt>Arquivo</dt><dd>${escapeHtml(record.nomeArquivo)}</dd>
+                <dt>Tags</dt><dd>${escapeHtml((record.tags || []).join(", ") || "Sem tags")}</dd>
+                <dt>Estado do PDF</dt><dd>${escapeHtml(record.pdfStatus || "Não informado")}</dd>
+              </dl>
+              <div class="detail__actions detail__actions--technical">
+
+              </div>
+            </section>
           </div>
         </div>
       </article>`;
@@ -1047,6 +1081,8 @@
         "referencias-nao-detectadas",
         "afinidade-nao-calculavel",
         "duplicata-provavel",
+        "com-sumario",
+        "sem-sumario",
       ];
     const qualityCounts = new Map(qualityValues.map(code => [
       code,
@@ -1201,8 +1237,8 @@
 
     const detailTab = event.target.closest("[data-detail-tab]");
     if (detailTab) switchDetailTab(detailTab.dataset.detailTab);
-    const tocOpen = event.target.closest("[data-toc-open]");
-    if (tocOpen) window.VisualizadorPDF?.open(tocOpen.dataset.tocOpen, Number(tocOpen.dataset.page) || 1);
+    const detailSwitch = event.target.closest("[data-switch-detail]");
+    if (detailSwitch) switchDetailTab(detailSwitch.dataset.switchDetail);
     const previous = event.target.closest("[data-detail-prev]");
     if (previous?.dataset.detailPrev) openDetails(previous.dataset.detailPrev);
     const next = event.target.closest("[data-detail-next]");
