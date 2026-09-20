@@ -3,252 +3,26 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Catálogo visual e consultável da Biblioteca de PDFs.">
-  <title>Biblioteca de PDFs</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%230d4a2d'/%3E%3Cpath d='M16 12h25l8 8v32H16z' fill='%23f4ecd7' stroke='%23b29138' stroke-width='3'/%3E%3Cpath d='M41 12v10h8' fill='none' stroke='%23b29138' stroke-width='3'/%3E%3Cpath d='M23 31h19M23 38h19M23 45h13' stroke='%230d4a2d' stroke-width='3'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="assets/estilo.css">
+  <meta name="description" content="Meu Acervo: catálogo acadêmico local, pesquisável e conectado.">
+  <meta name="theme-color" content="#0b4a32">
+  <title>Meu Acervo</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cpath d='M32 18C25 11 16 9 6 12v34c10-2 19 1 26 8V18Z' fill='%230b4a32'/%3E%3Cpath d='M32 18c7-7 16-9 26-6v34c-10-2-19 1-26 8V18Z' fill='%23146345'/%3E%3Cpath d='M32 18c-5-5-5-11 0-16 5 5 5 11 0 16Z' fill='%23b58b2e'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/estilo.css?v=20260920-1">
+  <script>window.MEU_ACERVO_ONLINE=true;</script>
   <script src="dados.js" defer></script>
   <script src="rede_citacoes.js" defer></script>
   <script src="mapa_afinidade.js" defer></script>
   <script src="assets/citacoes.js" defer></script>
-  <script src="assets/rede.js" defer></script>
-  <script src="assets/afinidade.js" defer></script>
-  <script src="assets/dendrograma.js" defer></script>
-  <script src="assets/qualidade.js" defer></script>
-  <script src="assets/catalogo_online.js" defer></script>
+  <script src="assets/catalogo.js?v=20260920-1" defer></script>
 </head>
 <body>
-  <a class="skip-link" href="#resultados">Ir para os resultados</a>
-
-  <header class="masthead">
-    <div class="masthead__inner">
-      <div class="masthead__brand">
-        <p class="eyebrow">Biblioteca Digital</p>
-        <h1>Catálogo de PDFs</h1>
-      </div>
-      <div class="masthead__search search-wrap">
-        <label for="busca">Pesquisar no catálogo</label>
-        <div class="search-field">
-          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m21 21-4.35-4.35m2.35-5.65a8 8 0 1 1-16 0 8 8 0 0 1 16 0Z"/></svg>
-          <input id="busca" type="search" autocomplete="off" spellcheck="false" placeholder='Buscar título, autor, seção do sumário ou usar assunto:"Machine Learning"'>
-          <kbd>/</kbd>
-        </div>
-      </div>
-      <div class="masthead__side">
-        <div class="masthead__summary" aria-label="Resumo da biblioteca">
-          <span id="total-documentos">0 documentos</span>
-          <span id="total-assuntos">0 assuntos</span>
-          <span id="atualizado-em">Atualizando...</span>
-        </div>
-        <div class="masthead__tools" aria-label="Ferramentas da biblioteca">
-          <span class="eyebrow">Versão online · PDFs não publicados</span>
-        </div>
-      </div>
+  <a class="skip-link" href="#main">Ir para o conteúdo</a>
+  <div id="app" class="app-shell">
+    <div class="boot-state">
+      <span class="boot-state__mark" aria-hidden="true"></span>
+      <p>Preparando o acervo…</p>
     </div>
-  </header>
-
-  <nav class="primary-nav" aria-label="Áreas do eBibCenter">
-    <div class="primary-nav__inner">
-      <button type="button" data-app-view="biblioteca" aria-pressed="true">Catálogo</button>
-      <button id="abrir-dendrograma" type="button" data-app-view="colecoes" aria-pressed="false">Coleções</button>
-      <button id="abrir-relacoes" type="button" data-app-view="relacoes" aria-pressed="false">Relações</button>
-      <button id="abrir-qualidade" type="button" data-app-view="qualidade" aria-pressed="false">Qualidade</button>
-      <button id="limpar-filtros-nav" class="primary-nav__clear" type="button" hidden>Limpar filtros</button>
-    </div>
-  </nav>
-
-  <main>
-    <div id="biblioteca-view" class="app-view">
-      <div class="library-layout">
-    <section class="query-panel" aria-labelledby="consulta-titulo">
-      <div class="filter-panel__heading">
-        <div>
-          <p class="eyebrow">Filtros</p>
-          <h2 id="consulta-titulo">Refinar catálogo</h2>
-        </div>
-        <button id="limpar" class="filter-panel__clear" type="button">Limpar tudo</button>
-      </div>
-      <p class="filter-panel__description">Combine assunto, tipo, publicação, ano e qualidade.</p>
-
-      <button id="alternar-filtros" class="button button--quiet filters-toggle" type="button" aria-expanded="false" aria-controls="filtros-catalogo">Filtros</button>
-
-      <div id="filtros-catalogo" class="filters">
-        <label>
-          <span>Assunto</span>
-          <select id="filtro-assunto"><option value="">Todos os assuntos</option></select>
-        </label>
-        <label>
-          <span>Subassunto</span>
-          <select id="filtro-subassunto"><option value="">Todos os subassuntos</option></select>
-        </label>
-        <label>
-          <span>Tipo</span>
-          <select id="filtro-tipo"><option value="">Todos os tipos</option></select>
-        </label>
-        <label>
-          <span>Publicação</span>
-          <select id="filtro-publicacao"><option value="">Todas as publicações</option></select>
-        </label>
-        <label>
-          <span>Ano</span>
-          <select id="filtro-ano"><option value="">Todos os anos</option></select>
-        </label>
-        <label>
-          <span>Qualidade</span>
-          <select id="filtro-qualidade"><option value="">Todos os estados</option></select>
-        </label>
-        <label>
-          <span>Ordenar</span>
-          <select id="ordenacao">
-            <option value="titulo">Título</option>
-            <option value="autor">Autor</option>
-            <option value="assunto">Assunto</option>
-            <option value="ano-desc">Ano: mais recente</option>
-            <option value="ano-asc">Ano: mais antigo</option>
-          </select>
-        </label>
-      </div>
-
-      <details class="query-help">
-        <summary>Como escrever uma query</summary>
-        <div class="query-help__body">
-          <code>assunto:"Machine Learning"</code>
-          <code>subassunto:"Transformers"</code>
-          <code>autor:"Vovk"</code>
-          <code>tipo:artigo</code>
-          <code>publicacao:Springer</code>
-          <code>titulo:"conformal prediction"</code>
-          <code>sumario:"exchangeability"</code>
-          <p>Termos livres e operadores são combinados com lógica <strong>E</strong>.</p>
-        </div>
-      </details>
-    </section>
-
-    <section class="results-section" id="resultados" aria-labelledby="resultados-titulo">
-      <div class="results-header">
-        <div class="section-heading section-heading--compact">
-          <span class="section-number">2</span>
-          <div>
-            <h2 id="resultados-titulo">Documentos</h2>
-            <p id="resultado-contagem" aria-live="polite">Carregando catálogo...</p>
-          </div>
-        </div>
-        <div class="results-header__tools">
-          <div class="view-switcher" role="group" aria-label="Visualização dos documentos">
-            <button type="button" data-layout="grid" aria-pressed="true">Grade</button>
-            <button type="button" data-layout="list" aria-pressed="false">Lista</button>
-            <button type="button" data-layout="table" aria-pressed="false">Tabela</button>
-          </div>
-          <button id="toggle-density" class="button button--quiet" type="button" aria-pressed="false">Compactar</button>
-          <button id="toggle-selection-mode" class="button button--quiet" type="button" aria-pressed="false">Selecionar</button>
-        </div>
-      </div>
-
-      <div id="filtros-ativos" class="active-filters" aria-label="Filtros ativos"></div>
-
-      <div id="results-workspace" class="results-workspace">
-        <div class="results-stream">
-          <div id="barra-exportacao" class="selection-bar" aria-label="Exportação bibliográfica em lote" hidden>
-            <div class="selection-bar__summary">
-              <strong id="selecao-contagem" aria-live="polite">0 documentos selecionados</strong>
-              <button id="selecionar-exibidos" type="button">Selecionar exibidos</button>
-            </div>
-            <label class="selection-bar__format" for="formato-exportacao">
-              <span>Formato</span>
-              <select id="formato-exportacao">
-                <option value="bibtex">BibTeX</option>
-                <option value="apa">APA</option>
-                <option value="abnt">ABNT</option>
-              </select>
-            </label>
-            <div class="selection-bar__actions">
-              <button id="dendrograma-selecao" type="button">Agrupar seleção</button>
-              <button id="comparar-selecao" type="button">Comparar</button>
-              <button id="copiar-selecao" type="button">Copiar</button>
-              <button id="baixar-selecao" type="button">Baixar arquivo</button>
-              <button id="limpar-selecao" type="button">Limpar seleção</button>
-            </div>
-          </div>
-
-          <div id="grade" class="catalog-grid"></div>
-
-          <div id="estado-vazio" class="empty-state" hidden>
-            <p class="eyebrow">Nenhum resultado</p>
-            <h3>A consulta não encontrou documentos.</h3>
-            <p>Remova um filtro ou tente termos mais amplos.</p>
-            <button class="button" type="button" data-clear>Limpar consulta</button>
-          </div>
-
-          <button id="carregar-mais" class="button button--more" type="button" hidden>Carregar mais</button>
-        </div>
-        <aside id="ficha-rapida" class="quick-preview" aria-label="Ficha rápida do documento" hidden></aside>
-      </div>
-    </section>
-      </div>
-    </div>
-
-    <section id="colecoes-view" class="app-view page-view" aria-labelledby="colecoes-page-title" hidden>
-      <div id="colecoes-page"></div>
-    </section>
-
-    <section id="relacoes-view" class="app-view page-view" aria-labelledby="relacoes-page-title" hidden>
-      <header class="page-header">
-        <p class="eyebrow">Exploração bibliográfica</p>
-        <h2 id="relacoes-page-title">Relações</h2>
-        <p>Escolha uma obra para separar citações diretas, referências compartilhadas e proximidade temática.</p>
-      </header>
-      <div class="relations-legend" aria-label="Tipos de relação">
-        <span class="relations-legend__item relations-legend__item--citation">Citação direta</span>
-        <span class="relations-legend__item relations-legend__item--shared">Referências compartilhadas</span>
-        <span class="relations-legend__item relations-legend__item--metadata">Afinidade por metadados</span>
-        <span class="relations-legend__item relations-legend__item--unavailable">Indisponível</span>
-      </div>
-      <div class="relations-explorer">
-        <label for="relacoes-documento"><span>Obra central</span><select id="relacoes-documento"></select></label>
-        <div id="relacoes-resumo" class="relations-explorer__summary"></div>
-      </div>
-    </section>
-
-    <section id="qualidade-view" class="app-view page-view" aria-labelledby="qualidade-page-title" hidden>
-      <div id="qualidade-page"></div>
-    </section>
-  </main>
-
-  <dialog id="detalhes" class="detail-dialog">
-    <div class="dialog-shell">
-      <button id="fechar-detalhes" class="close-button" type="button" aria-label="Fechar detalhes">×</button>
-      <div id="detalhes-conteudo"></div>
-    </div>
-  </dialog>
-
-  <dialog id="rede-bibliografica" class="network-dialog">
-    <div class="network-shell">
-      <button id="fechar-rede" class="close-button" type="button" aria-label="Fechar rede bibliográfica">×</button>
-      <div id="rede-conteudo"></div>
-    </div>
-  </dialog>
-
-  <dialog id="dendrograma-afinidade" class="dendrogram-dialog">
-    <div class="dendrogram-shell">
-      <button id="fechar-dendrograma" class="close-button" type="button" aria-label="Fechar coleções sugeridas">×</button>
-      <div id="dendrograma-conteudo"></div>
-    </div>
-  </dialog>
-
-  <dialog id="comparacao-documentos" class="utility-dialog comparison-dialog">
-    <div class="utility-shell">
-      <button id="fechar-comparacao" class="close-button" type="button" aria-label="Fechar comparação">×</button>
-      <div id="comparacao-conteudo"></div>
-    </div>
-  </dialog>
-
-  <dialog id="qualidade-biblioteca" class="utility-dialog">
-    <div class="utility-shell">
-      <button id="fechar-qualidade" class="close-button" type="button" aria-label="Fechar painel de qualidade">×</button>
-      <div id="qualidade-conteudo"></div>
-    </div>
-  </dialog>
-
-  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  </div>
+  <noscript>Ative o JavaScript para usar o catálogo.</noscript>
 </body>
 </html>
