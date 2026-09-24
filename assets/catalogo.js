@@ -12,6 +12,7 @@
   const citationExtraction = new Map((citationData.extraction || []).map(item => [item.id, item]));
   const affinityExtraction = new Map((affinityData.extraction || []).map(item => [item.id, item]));
   const loadedScripts = new Map();
+  let toastTimer;
 
   const preferred = docs.find(doc => normalize(doc.titulo) === "probability measure theory")
     || docs.find(doc => /probability.*measure theory/i.test(doc.titulo || ""))
@@ -225,7 +226,16 @@
 
   function displayTags(doc, limit = 5) {
     const fromTags = (doc.tags || []).flatMap(tag => String(tag).split(/[\/]/g));
-    return unique([doc.assunto, doc.subassunto, ...fromTags])
+    const aliases = {
+      ia: "Inteligência Artificial",
+      alglin: "Álgebra Linear",
+      mcmc: "MCMC",
+      ptbr: "Português Brasileiro",
+      "visualizacao de dados": "Visualização de Dados",
+      "comunicacao cientifica": "Comunicação Científica",
+      "machine learning": "Machine Learning",
+    };
+    return unique(fromTags.map(item => aliases[normalize(item)] || item.replace(/-/g, " ")))
       .filter(item => normalize(item) !== normalize(doc.assunto) && normalize(item) !== normalize(doc.subassunto))
       .slice(0, limit);
   }
@@ -395,8 +405,10 @@
 
   function renderCatalog() {
     const result = filteredDocs();
+    const selectedIndex = result.findIndex(doc => doc.id === state.selectedId);
+    if (selectedIndex >= state.limit) state.limit = Math.ceil((selectedIndex + 1) / 60) * 60;
     const visible = result.slice(0, state.limit);
-    const selected = visible.find(doc => doc.id === state.selectedId) || visible[0] || null;
+    const selected = result[selectedIndex] || visible[0] || null;
     if (selected && state.selectedId !== selected.id) state.selectedId = selected.id;
     return `${renderModeStrip()}${renderFilterBar(result.length)}
       <section class="catalog-workspace">
@@ -412,7 +424,7 @@
   function renderCatalogRow(doc) {
     const relations = relationCount(doc.id);
     return `<button class="catalog-row" type="button" data-select-doc="${escapeHtml(doc.id)}" aria-selected="${doc.id === state.selectedId}">
-      <span class="document-cell">${coverMarkup(doc)}<span><h3>${escapeHtml(doc.titulo)}</h3><p>${escapeHtml((doc.autores || []).join("; ") || "Autoria não informada")}</p></span></span>
+      <span class="document-cell">${coverMarkup(doc)}<span><h3>${escapeHtml(doc.titulo)}</h3><p>${doc.ano ? `${escapeHtml(doc.ano)} · ` : ""}${escapeHtml((doc.autores || []).join("; ") || "Autoria não informada")}</p></span></span>
       <span class="type-badge">${escapeHtml(typeLabel(doc.tipo))}</span>
       <span class="cell-main">${escapeHtml(doc.assunto || "Não informado")}<small>${escapeHtml(doc.subassunto || "")}</small></span>
       <span class="status-chip ${doc.sumario?.length ? "status-chip--ok" : "status-chip--muted"}">${icon("toc")} ${doc.sumario?.length ? "Sim" : "Não"}</span>
@@ -425,7 +437,7 @@
   function renderQuickPreview(doc, index, total) {
     return `<aside class="quick-preview" data-open="${state.previewOpen}" aria-label="Prévia rápida">
       <header class="preview-heading"><h2>${icon("document")} Prévia rápida</h2><span>${Math.max(1, index)} de ${total} <button class="icon-button" type="button" data-preview-step="-1" aria-label="Documento anterior">‹</button><button class="icon-button" type="button" data-preview-step="1" aria-label="Próximo documento">›</button><button class="icon-button" type="button" data-close-preview aria-label="Fechar prévia">${icon("close")}</button></span></header>
-      <div class="preview-document">${coverMarkup(doc, "preview-document__cover")}<div><h2>${escapeHtml(doc.titulo)}</h2><dl class="preview-meta"><dt>Tipo</dt><dd>${escapeHtml(typeLabel(doc.tipo))}</dd><dt>Assunto</dt><dd>${escapeHtml(doc.assunto || "Não informado")}</dd><dt>Subassunto</dt><dd>${escapeHtml(doc.subassunto || "Não informado")}</dd></dl><div class="tag-list">${displayTags(doc).map(tag => `<span class="tag">${escapeHtml(tag)}</span>`).join("")}</div></div></div>
+      <div class="preview-document">${coverMarkup(doc, "preview-document__cover")}<div><h2>${escapeHtml(doc.titulo)}</h2><dl class="preview-meta"><dt>Tipo</dt><dd>${escapeHtml(typeLabel(doc.tipo))}</dd><dt>Assunto</dt><dd>${escapeHtml(doc.assunto || "Não informado")}</dd><dt>Subassunto</dt><dd>${escapeHtml(doc.subassunto || "Não informado")}</dd><dt>Ano</dt><dd>${escapeHtml(doc.ano || "Não informado")}</dd></dl><div class="tag-list">${displayTags(doc).map(tag => `<span class="tag">${escapeHtml(tag)}</span>`).join("")}</div></div></div>
       <div class="preview-statuses">
         <div class="preview-status">${icon("toc")}<div><strong>Sumário</strong><span>${doc.sumario?.length ? `${doc.sumario.length} seções` : "Não disponível"}</span></div></div>
         <div class="preview-status">${icon("online")}<div><strong>Leitura oficial</strong><span>${isOnline(doc) ? "Disponível" : "Não registrada"}</span></div></div>
@@ -818,7 +830,7 @@
 
   function renderTocNodes(nodes, depth = 1) {
     return `<ul>${nodes.map((node, index) => {
-      const content = `<span>${escapeHtml(node.titulo)}</span><span class="toc-page">${node.pagina ? escapeHtml(node.pagina) : ""}</span>`;
+      const content = `<span>${escapeHtml(node.titulo)}</span>`;
       if (node.children.length) return `<li><details ${depth === 1 && index < 4 ? "open" : ""}><summary>${content}</summary>${renderTocNodes(node.children, depth + 1)}</details></li>`;
       return `<li><div class="toc-leaf">${content}</div></li>`;
     }).join("")}</ul>`;
@@ -866,31 +878,36 @@
   }
 
   const graphPositions = [
-    { x: 500, y: 88 },
-    { x: 805, y: 168 },
-    { x: 805, y: 458 },
-    { x: 500, y: 560 },
-    { x: 195, y: 458 },
-    { x: 195, y: 168 },
+    { x: 500, y: 110 },
+    { x: 835, y: 230 },
+    { x: 835, y: 570 },
+    { x: 500, y: 690 },
+    { x: 165, y: 570 },
+    { x: 165, y: 230 },
   ];
 
   function renderGraph(center, links, selectedId) {
     const lines = links.map((link, index) => {
       const position = graphPositions[index];
       const kind = relationKind(link);
-      const from = link.incoming && !link.outgoing ? position : { x: 500, y: 324 };
-      const to = link.incoming && !link.outgoing ? { x: 500, y: 324 } : position;
+      const dx = position.x - 500;
+      const dy = position.y - 400;
+      const distance = Math.hypot(dx, dy);
+      const centerEdge = { x: 500 + dx * 128 / distance, y: 400 + dy * 128 / distance };
+      const outerEdge = { x: position.x - dx * 100 / distance, y: position.y - dy * 100 / distance };
+      const from = link.incoming && !link.outgoing ? outerEdge : centerEdge;
+      const to = link.incoming && !link.outgoing ? centerEdge : outerEdge;
       const labelX = (position.x + 500) / 2;
-      const labelY = (position.y + 324) / 2 - 8;
+      const labelY = (position.y + 400) / 2 - 8;
       const label = kind === "outgoing" ? "cita" : kind === "incoming" ? "é citado por" : kind === "shared" ? `${link.shared} refs.` : `${Math.round(link.similarity * 100)}%`;
-      return `<line class="graph-line graph-line--${kind}" x1="${from.x}" y1="${from.y}" x2="${to.x}" y2="${to.y}" marker-end="url(#arrow-${kind})"/><text x="${labelX}" y="${labelY}" text-anchor="middle" fill="#52635b" font-family="Georgia" font-size="13">${escapeHtml(label)}</text>`;
+      return `<line class="graph-line graph-line--${kind}" x1="${from.x}" y1="${from.y}" x2="${to.x}" y2="${to.y}" marker-end="url(#arrow-${kind})"/><text class="graph-line-label" x="${labelX}" y="${labelY}" text-anchor="middle">${escapeHtml(label)}</text>`;
     }).join("");
     const nodes = links.map((link, index) => {
       const doc = docsById.get(link.id);
       const position = graphPositions[index];
-      return `<button class="graph-node" type="button" data-network-target="${escapeHtml(doc.id)}" aria-pressed="${doc.id === selectedId}" style="left:${position.x / 10}%;top:${position.y / 6.4}%">${coverMarkup(doc)}<strong>${escapeHtml(doc.titulo)}</strong></button>`;
+      return `<button class="graph-node" type="button" data-network-target="${escapeHtml(doc.id)}" aria-pressed="${doc.id === selectedId}" style="left:${position.x / 10}%;top:${position.y / 8}%">${coverMarkup(doc)}<strong>${escapeHtml(doc.titulo)}</strong></button>`;
     }).join("");
-    return `<div class="graph"><svg viewBox="0 0 1000 640" aria-hidden="true"><defs><marker id="arrow-outgoing" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#0b4a32"/></marker><marker id="arrow-incoming" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#a47a20"/></marker><marker id="arrow-shared" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#265f86"/></marker><marker id="arrow-affinity" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#86a69b"/></marker></defs>${lines}</svg>${nodes}<button class="graph-node graph-node--center" type="button" data-open-detail="${escapeHtml(center.id)}" style="left:50%;top:50.6%">${coverMarkup(center)}<strong>${escapeHtml(center.titulo)}</strong></button></div>`;
+    return `<div class="graph"><svg viewBox="0 0 1000 800" aria-hidden="true"><defs><marker id="arrow-outgoing" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#0b4a32"/></marker><marker id="arrow-incoming" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#a47a20"/></marker><marker id="arrow-shared" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#265f86"/></marker><marker id="arrow-affinity" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#86a69b"/></marker></defs>${lines}</svg>${nodes}<button class="graph-node graph-node--center" type="button" data-open-detail="${escapeHtml(center.id)}" style="left:50%;top:50%">${coverMarkup(center)}<strong>${escapeHtml(center.titulo)}</strong></button></div>`;
   }
 
   function renderNetworkDetail(center, link) {
@@ -921,11 +938,17 @@
 
   function showToast(message) {
     state.toast = message;
-    render();
-    window.setTimeout(() => {
+    window.clearTimeout(toastTimer);
+    app.querySelector(".toast")?.remove();
+    const notice = document.createElement("div");
+    notice.className = "toast";
+    notice.setAttribute("role", "status");
+    notice.textContent = message;
+    app.append(notice);
+    toastTimer = window.setTimeout(() => {
       if (state.toast === message) {
         state.toast = "";
-        render();
+        app.querySelector(".toast")?.remove();
       }
     }, 2400);
   }

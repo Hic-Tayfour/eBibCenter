@@ -1436,8 +1436,8 @@ mark {
   z-index: 20;
   top: 0;
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  overflow: hidden;
+  grid-template-columns: repeat(4, minmax(128px, 1fr));
+  overflow-x: auto;
   border: 1px solid var(--line);
   border-radius: 6px 6px 0 0;
   background: var(--paper-2);
@@ -1511,8 +1511,7 @@ mark {
 .toc-tree summary,
 .toc-leaf {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 0.75rem;
+  grid-template-columns: minmax(0, 1fr);
   min-height: 34px;
   align-items: center;
   padding: 0.4rem 0.3rem;
@@ -1526,11 +1525,6 @@ mark {
 
 .toc-tree ul {
   padding-left: 1.15rem;
-}
-
-.toc-page {
-  color: var(--ink-soft);
-  font-size: 0.72rem;
 }
 
 .relation-list {
@@ -1714,8 +1708,8 @@ mark {
 .graph {
   position: relative;
   width: min(100%, 1050px);
-  min-width: 720px;
-  aspect-ratio: 1000 / 640;
+  min-width: 850px;
+  aspect-ratio: 1000 / 800;
   margin: 1rem auto 0;
 }
 
@@ -1736,6 +1730,15 @@ mark {
 .graph-line--incoming { stroke: var(--gold); stroke-dasharray: 7 6; }
 .graph-line--shared { stroke: #1f67a0; stroke-dasharray: 3 6; }
 .graph-line--affinity { stroke: #8aa79d; stroke-dasharray: 3 8; }
+
+.graph-line-label {
+  fill: var(--ink-soft);
+  font: 13px var(--serif);
+  paint-order: stroke;
+  stroke: var(--paper);
+  stroke-width: 8px;
+  stroke-linejoin: round;
+}
 
 .graph-node {
   position: absolute;
@@ -2213,7 +2216,7 @@ mark {
   .biblio-item { grid-template-columns: 110px 1fr; }
 
   .detail-tabs {
-    grid-template-columns: repeat(4, minmax(75px, 1fr));
+    grid-template-columns: repeat(4, minmax(128px, 1fr));
     overflow-x: auto;
   }
 
@@ -2225,7 +2228,6 @@ mark {
   .network-canvas { padding: 0.75rem; }
   .network-canvas__head { align-items: flex-start; }
   .network-canvas__head .document-stepper > span { display: none; }
-  .graph { min-width: 680px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
