@@ -44,6 +44,8 @@
     textLoading: false,
     networkId: preferred?.id || "",
     networkTargetId: "",
+    networkQuery: "",
+    networkSidebarOpen: false,
     networkFilters: {
       outgoing: true,
       incoming: true,
@@ -91,6 +93,7 @@
       quality: '<path d="M12 3 4.5 6v5.4c0 4.7 3.2 8.1 7.5 9.6 4.3-1.5 7.5-4.9 7.5-9.6V6L12 3Z"/><path d="m9 12 2 2 4-5"/>',
       relations: '<circle cx="5" cy="12" r="2.5"/><circle cx="18" cy="5" r="2.5"/><circle cx="18" cy="19" r="2.5"/><path d="m7.2 10.8 8.5-4.6M7.2 13.2l8.5 4.6"/>',
       document: '<path d="M6 2.5h8l4 4V21H6z"/><path d="M14 2.5v5h4M9 12h6M9 16h6"/>',
+      code: '<path d="m8 8-4 4 4 4M16 8l4 4-4 4M14 4l-4 16"/>',
       text: '<path d="M5 4h14M9 8h6M9 12h6M9 16h6M5 8h.01M5 12h.01M5 16h.01"/>',
       filter: '<path d="M4 5h16l-6.5 7v6l-3 1.5V12L4 5Z"/>',
       list: '<path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/>',
@@ -292,6 +295,12 @@
 
   function render() {
     app.innerHTML = `${renderHeader()}<main id="main" class="app-main">${renderView()}</main>${state.toast ? `<div class="toast" role="status">${escapeHtml(state.toast)}</div>` : ""}`;
+    updateSiteHeaderHeight();
+  }
+
+  function updateSiteHeaderHeight() {
+    const height = app.querySelector(".site-header")?.offsetHeight;
+    if (height) document.documentElement.style.setProperty("--site-header-height", `${height}px`);
   }
 
   function renderView() {
@@ -413,7 +422,7 @@
     return `${renderModeStrip()}${renderFilterBar(result.length)}
       <section class="catalog-workspace">
         <div class="catalog-results" data-layout="${state.layout}">
-          <div class="list-head" aria-hidden="true"><span>Documento</span><span>Tipo</span><span>Assunto</span><span>Sumário</span><span>Leitura oficial</span><span>Relações</span><span></span></div>
+          <div class="list-head" aria-hidden="true"><span>Documento</span><span>Tipo</span><span>Assunto</span><span>Sumário</span><span>Leitura oficial</span><span>Relações</span><span>Ficha</span></div>
           <div class="catalog-list">${visible.length ? visible.map(renderCatalogRow).join("") : renderEmpty("Nenhum documento encontrado", "Remova um filtro ou use termos mais amplos.")}</div>
           ${visible.length < result.length ? `<button class="load-more" type="button" data-load-more>Carregar mais ${Math.min(60, result.length - visible.length)}</button>` : ""}
         </div>
@@ -423,15 +432,16 @@
 
   function renderCatalogRow(doc) {
     const relations = relationCount(doc.id);
-    return `<button class="catalog-row" type="button" data-select-doc="${escapeHtml(doc.id)}" aria-selected="${doc.id === state.selectedId}">
-      <span class="document-cell">${coverMarkup(doc)}<span><h3>${escapeHtml(doc.titulo)}</h3><p>${doc.ano ? `${escapeHtml(doc.ano)} · ` : ""}${escapeHtml((doc.autores || []).join("; ") || "Autoria não informada")}</p></span></span>
+    return `<div class="catalog-row" data-selected="${doc.id === state.selectedId}">
+      <button class="catalog-row__select" type="button" data-select-doc="${escapeHtml(doc.id)}" aria-pressed="${doc.id === state.selectedId}" aria-label="Selecionar ${escapeHtml(doc.titulo)} para prévia"></button>
+      <div class="document-cell">${coverMarkup(doc)}<div><h3>${escapeHtml(doc.titulo)}</h3><p>${doc.ano ? `${escapeHtml(doc.ano)} · ` : ""}${escapeHtml((doc.autores || []).join("; ") || "Autoria não informada")}</p></div></div>
       <span class="type-badge">${escapeHtml(typeLabel(doc.tipo))}</span>
       <span class="cell-main">${escapeHtml(doc.assunto || "Não informado")}<small>${escapeHtml(doc.subassunto || "")}</small></span>
       <span class="status-chip ${doc.sumario?.length ? "status-chip--ok" : "status-chip--muted"}">${icon("toc")} ${doc.sumario?.length ? "Sim" : "Não"}</span>
       <span class="status-chip ${isOnline(doc) ? "status-chip--ok" : "status-chip--muted"}">${isOnline(doc) ? icon("online") : "○"} ${isOnline(doc) ? "Sim" : "Não"}</span>
       <span class="status-chip ${relations ? "status-chip--ok" : "status-chip--muted"}">${icon("relations")} ${relations}</span>
-      <span class="row-arrow">›</span>
-    </button>`;
+      <button class="catalog-row__open" type="button" data-open-detail="${escapeHtml(doc.id)}" aria-label="Abrir ficha de ${escapeHtml(doc.titulo)}">Abrir ficha <span aria-hidden="true">→</span></button>
+    </div>`;
   }
 
   function renderQuickPreview(doc, index, total) {
@@ -752,9 +762,10 @@
     const related = relations.filter(link => link.shared || link.similarity).slice(0, 8);
     const formats = ["bibtex", "apa", "abnt"];
     return `<section class="detail-page">
+      <header class="detail-toolbar"><nav class="breadcrumbs" aria-label="Navegação estrutural"><button type="button" data-view="catalog">${icon("home")} Catálogo</button><span>›</span><button type="button" data-filter-link="subject" data-value="${escapeHtml(doc.assunto || "")}">${escapeHtml(doc.assunto || "Sem assunto")}</button><span>›</span><button type="button" data-filter-link="subsubject" data-value="${escapeHtml(doc.subassunto || "")}">${escapeHtml(doc.subassunto || "Sem subassunto")}</button></nav><div class="detail-toolbar__navigation"><span class="detail-toolbar__title" title="${escapeHtml(doc.titulo)}">${escapeHtml(doc.titulo)}</span>${renderDocumentStepper(sequence, doc.id, "detail")}</div></header>
       <div class="detail-main">
-        <header class="detail-toolbar"><nav class="breadcrumbs" aria-label="Navegação estrutural"><button type="button" data-view="catalog">${icon("home")} Catálogo</button><span>›</span><button type="button" data-filter-link="subject" data-value="${escapeHtml(doc.assunto || "")}">${escapeHtml(doc.assunto || "Sem assunto")}</button><span>›</span><button type="button" data-filter-link="subsubject" data-value="${escapeHtml(doc.subassunto || "")}">${escapeHtml(doc.subassunto || "Sem subassunto")}</button><span>›</span><span>${escapeHtml(doc.titulo)}</span></nav></header>
-        <section class="detail-hero">${coverMarkup(doc, "detail-cover")}<div class="detail-identity"><div class="detail-title"><span class="type-badge">${escapeHtml(typeLabel(doc.tipo))}</span><h1>${escapeHtml(doc.titulo)}</h1><p class="detail-authors">${escapeHtml((doc.autores || []).join("; ") || "Autoria não informada")}</p><div class="detail-subjects"><span>Assunto</span><strong>${escapeHtml(doc.assunto || "Não informado")}</strong><span>Subassunto</span><strong>${escapeHtml(doc.subassunto || "Não informado")}</strong></div><div class="tag-list">${displayTags(doc, 6).map(tag => `<span class="tag">${escapeHtml(tag)}</span>`).join("")}</div></div><div class="detail-actions-nav">${renderDocumentStepper(sequence, doc.id, "detail")}</div>${renderActionGroups(doc)}</div></section>
+        <section class="detail-hero">${coverMarkup(doc, "detail-cover")}<div class="detail-identity"><div class="detail-title"><span class="type-badge">${escapeHtml(typeLabel(doc.tipo))}</span><h1>${escapeHtml(doc.titulo)}</h1><p class="detail-authors">${escapeHtml((doc.autores || []).join("; ") || "Autoria não informada")}</p><div class="detail-subjects"><span>Assunto</span><strong>${escapeHtml(doc.assunto || "Não informado")}</strong><span>Subassunto</span><strong>${escapeHtml(doc.subassunto || "Não informado")}</strong></div><div class="tag-list">${displayTags(doc, 6).map(tag => `<span class="tag">${escapeHtml(tag)}</span>`).join("")}</div></div>${renderActionGroups(doc)}</div></section>
+        ${renderCodeResources(doc)}
         <section class="detail-section"><h2>${icon("document")} Identificação bibliográfica</h2><div class="biblio-grid">${biblioRow(biblioItem("Título", doc.titulo), biblioItem("Tipo de documento", typeLabel(doc.tipo)))}${biblioRow(biblioItem("Autor(es)", (doc.autores || []).join("; ")), biblioItem("Assunto", doc.assunto))}${biblioRow(biblioItem("Ano", doc.ano), biblioItem("Subassunto", doc.subassunto))}${biblioRow(biblioItem("Publicação", doc.publicacao), biblioItem("Páginas", doc.paginas))}${biblioRow(biblioItem("Qualidade bibliográfica", doc.bibStatus === "verificado" ? "Verificada" : "Pendente"), biblioItem("Fonte da verificação", doc.bibFonte))}</div></section>
         <section class="detail-section"><h2>${icon("quote")} Formatos de referência</h2><div class="citation-grid">${formats.map(format => renderCitationCard(doc, format)).join("")}</div></section>
       </div>
@@ -775,6 +786,12 @@
       return `<div class="action-groups action-groups--online"><section class="action-group"><h2>${icon("globe")} Ações públicas</h2><div class="action-group__buttons">${isOnline(doc) ? `<button class="primary-action" type="button" data-open-official="${escapeHtml(doc.id)}">${icon("external")} Ler online ${icon("chevron")}</button>` : `<p class="online-notice">Nenhum acesso público registrado.</p>`}<button type="button" data-copy-citation="${escapeHtml(doc.id)}" data-format="apa">${icon("quote")} Copiar citação APA</button><button type="button" data-open-network="${escapeHtml(doc.id)}">${icon("relations")} Explorar relações</button></div></section></div>`;
     }
     return `<div class="action-groups"><section class="action-group"><h2>${icon("monitor")} Ações locais</h2><div class="action-group__buttons"><button class="primary-action" type="button" data-open-pdf="${escapeHtml(doc.id)}">${icon("document")} Abrir PDF local ${icon("chevron")}</button>${doc.notaUri ? `<button type="button" data-open-note="${escapeHtml(doc.id)}">${icon("note")} Abrir nota local</button>` : ""}<button type="button" data-copy-path="${escapeHtml(doc.id)}">${icon("copy")} Copiar caminho</button></div></section><section class="action-group"><h2>${icon("globe")} Ações públicas</h2><div class="action-group__buttons">${isOnline(doc) ? `<button type="button" data-open-official="${escapeHtml(doc.id)}">${icon("external")} Ler online</button>` : `<p style="font:0.78rem var(--serif);color:var(--ink-soft)">Nenhum acesso público registrado.</p>`}<button type="button" data-copy-citation="${escapeHtml(doc.id)}" data-format="apa">${icon("quote")} Copiar citação APA</button><button type="button" data-open-network="${escapeHtml(doc.id)}">${icon("relations")} Explorar relações</button></div></section></div>`;
+  }
+
+  function renderCodeResources(doc) {
+    const resources = window.FONTES_CODIGO?.[doc.bibId] || [];
+    if (!resources.length) return "";
+    return `<section class="detail-section code-resources"><h2>${icon("code")} Código e implementações</h2><p class="code-resources__intro">Fontes associadas a esta obra, com a origem e a edição indicadas quando necessário.</p><div class="code-resources__grid">${resources.map(item => `<a class="code-resource" href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer"><span class="code-resource__type">${escapeHtml(item.tipo)}</span><strong>${escapeHtml(item.titulo)} ${icon("external")}</strong><span>${escapeHtml(item.descricao)}</span><small>${escapeHtml(item.evidencia)}</small></a>`).join("")}</div></section>`;
   }
 
   function biblioItem(label, value) {
@@ -831,25 +848,34 @@
   function renderTocNodes(nodes, depth = 1) {
     return `<ul>${nodes.map((node, index) => {
       const content = `<span>${escapeHtml(node.titulo)}</span>`;
-      if (node.children.length) return `<li><details ${depth === 1 && index < 4 ? "open" : ""}><summary>${content}</summary>${renderTocNodes(node.children, depth + 1)}</details></li>`;
-      return `<li><div class="toc-leaf">${content}</div></li>`;
+      const label = escapeHtml(normalize(node.titulo));
+      if (node.children.length) return `<li data-toc-label="${label}"><details ${depth === 1 && index < 4 ? "open" : ""}><summary>${content}</summary>${renderTocNodes(node.children, depth + 1)}</details></li>`;
+      return `<li data-toc-label="${label}"><div class="toc-leaf">${content}</div></li>`;
     }).join("")}</ul>`;
   }
 
   function renderTocPanel(doc) {
     if (!doc.sumario?.length) return `<section class="rail-panel"><header class="rail-panel__head"><h2>${icon("toc")} Sumário</h2></header>${renderEmpty("Sumário indisponível", "Nenhum sumário em Markdown foi associado a esta obra.")}</section>`;
-    return `<section class="rail-panel"><header class="rail-panel__head"><h2>${icon("toc")} Sumário</h2><span><button type="button" data-toc-action="expand">Expandir tudo</button> | <button type="button" data-toc-action="collapse">Recolher tudo</button></span></header><div class="toc-tree">${renderTocNodes(buildToc(doc.sumario))}</div></section>`;
+    return `<section class="rail-panel"><header class="rail-panel__head"><h2>${icon("toc")} Sumário</h2><span><button type="button" data-toc-action="expand">Expandir tudo</button> | <button type="button" data-toc-action="collapse">Recolher tudo</button></span></header><label class="toc-search">${icon("search")}<span class="sr-only">Buscar título no sumário</span><input type="search" data-toc-search aria-controls="detail-toc-tree" placeholder="Buscar título no sumário…" autocomplete="off"></label><p class="toc-search__status" data-toc-status role="status" aria-live="polite" hidden></p><div id="detail-toc-tree" class="toc-tree">${renderTocNodes(buildToc(doc.sumario))}</div></section>`;
   }
 
   /* Rede bibliográfica */
 
   function visibleNetworkLinks(id) {
-    return relationLinks(id).filter(link =>
-      (link.outgoing && state.networkFilters.outgoing)
-      || (link.incoming && state.networkFilters.incoming)
-      || (link.shared > 0 && state.networkFilters.shared)
-      || (!link.outgoing && !link.incoming && !link.shared && link.similarity > 0 && state.networkFilters.affinity)
-    );
+    const query = normalize(state.networkQuery);
+    return relationLinks(id).map(link => {
+      const outgoing = link.outgoing && state.networkFilters.outgoing;
+      const incoming = link.incoming && state.networkFilters.incoming;
+      const shared = state.networkFilters.shared ? link.shared : 0;
+      const similarity = state.networkFilters.affinity ? link.similarity : 0;
+      if (!outgoing && !incoming && !shared && !similarity) return null;
+      const doc = docsById.get(link.id);
+      if (query && !normalize([doc.titulo, ...(doc.autores || []), doc.assunto, doc.subassunto].join(" ")).includes(query)) return null;
+      return { ...link, outgoing, incoming, shared, similarity,
+        evidence: outgoing || incoming ? link.evidence : "",
+        page: outgoing || incoming ? link.page : null,
+      };
+    }).filter(Boolean);
   }
 
   function renderNetwork() {
@@ -857,13 +883,16 @@
     if (!center) return renderEmpty("Rede indisponível", "Nenhum documento central foi selecionado.");
     const sequence = networkSequence(center.id);
     const links = visibleNetworkLinks(center.id);
-    const visible = links.slice(0, 6);
-    const target = links.find(link => link.id === state.networkTargetId) || visible[0] || null;
-    if (target && state.networkTargetId !== target.id) state.networkTargetId = target.id;
+    const target = links.find(link => link.id === state.networkTargetId) || links[0] || null;
+    state.networkTargetId = target?.id || "";
+    const targetIndex = target ? links.findIndex(link => link.id === target.id) : -1;
+    const windowStart = targetIndex < 0 ? 0 : Math.floor(targetIndex / 6) * 6;
+    const visible = links.slice(windowStart, windowStart + 6);
     return `${renderModeStrip(`<button type="button" aria-pressed="true">${icon("relations")} Relações bibliográficas</button>`)}
-      <section class="network-page">
-        <aside class="network-sidebar"><h2>Explorar relações</h2><div class="relation-types"><strong>Tipo de relação</strong>${networkFilter("outgoing", "Cita", "line-key")}${networkFilter("incoming", "É citado por", "line-key--incoming")}${networkFilter("shared", "Referências compartilhadas", "line-key--shared")}${networkFilter("affinity", "Afinidade temática", "line-key--affinity")}</div><label class="global-search" style="margin-bottom:.8rem">${icon("search")}<input type="search" data-network-search placeholder="Buscar na rede…"></label><p><strong>Obras relacionadas (${links.length})</strong></p>${links.map(link => renderNetworkListButton(link, target?.id)).join("")}</aside>
-        <section class="network-canvas"><header class="network-canvas__head"><div><h1>Rede bibliográfica</h1><p>Obras relacionadas a “${escapeHtml(center.titulo)}”</p></div>${renderDocumentStepper(sequence, center.id, "network")}</header>${renderGraph(center, visible, target?.id)}</section>
+      <section class="network-page" data-sidebar-open="${state.networkSidebarOpen}">
+        <button class="network-sidebar-toggle" type="button" data-network-sidebar aria-expanded="${state.networkSidebarOpen}" aria-controls="network-sidebar">${icon("filter")} Explorar relações <span>${links.length}</span></button>
+        <aside class="network-sidebar" id="network-sidebar"><h2>Explorar relações</h2><div class="relation-types"><strong>Tipo de relação</strong>${networkFilter("outgoing", "Cita", "line-key")}${networkFilter("incoming", "É citado por", "line-key--incoming")}${networkFilter("shared", "Referências compartilhadas", "line-key--shared")}${networkFilter("affinity", "Afinidade temática", "line-key--affinity")}</div><label class="global-search" style="margin-bottom:.8rem">${icon("search")}<input type="search" data-network-search value="${escapeHtml(state.networkQuery)}" aria-label="Buscar obras relacionadas" placeholder="Buscar na rede…"></label><p><strong>Obras relacionadas (${links.length})</strong></p><div class="network-list">${links.length ? links.map(link => renderNetworkListButton(link, target?.id)).join("") : renderEmpty("Nenhuma obra encontrada", "Revise a busca ou ative outros tipos de relação.")}</div></aside>
+        <section class="network-canvas"><header class="network-canvas__head"><div><h1>Rede bibliográfica</h1><p>Obras relacionadas a “${escapeHtml(center.titulo)}”</p></div>${renderDocumentStepper(sequence, center.id, "network")}</header><nav class="network-relations-nav" aria-label="Navegar entre obras relacionadas"><span>${target ? `${targetIndex + 1} de ${links.length} relações · ${windowStart + 1}–${Math.min(windowStart + 6, links.length)} no gráfico` : "Nenhuma relação visível"}</span><div><button type="button" data-network-link-step="-1" aria-label="Relação anterior" ${links.length < 2 ? "disabled" : ""}>‹</button><button type="button" data-network-link-step="1" aria-label="Próxima relação" ${links.length < 2 ? "disabled" : ""}>›</button></div></nav><p class="network-canvas__hint">Deslize horizontalmente para explorar o gráfico.</p>${renderGraph(center, visible, target?.id)}</section>
         ${renderNetworkDetail(center, target)}
       </section>`;
   }
@@ -877,18 +906,19 @@
     return `<button class="network-list-button" type="button" data-network-target="${escapeHtml(link.id)}" aria-selected="${link.id === selectedId}">${coverMarkup(doc)}<span><strong>${escapeHtml(doc.titulo)}</strong><span>${escapeHtml(doc.assunto || typeLabel(doc.tipo))}</span></span>${icon("chevron")}</button>`;
   }
 
-  const graphPositions = [
-    { x: 500, y: 110 },
-    { x: 835, y: 230 },
-    { x: 835, y: 570 },
-    { x: 500, y: 690 },
-    { x: 165, y: 570 },
-    { x: 165, y: 230 },
-  ];
+  const graphPositions = {
+    1: [{ x: 500, y: 110 }],
+    2: [{ x: 165, y: 400 }, { x: 835, y: 400 }],
+    3: [{ x: 500, y: 110 }, { x: 835, y: 570 }, { x: 165, y: 570 }],
+    4: [{ x: 165, y: 230 }, { x: 835, y: 230 }, { x: 835, y: 570 }, { x: 165, y: 570 }],
+    5: [{ x: 500, y: 110 }, { x: 835, y: 230 }, { x: 835, y: 570 }, { x: 165, y: 570 }, { x: 165, y: 230 }],
+    6: [{ x: 500, y: 110 }, { x: 835, y: 230 }, { x: 835, y: 570 }, { x: 500, y: 690 }, { x: 165, y: 570 }, { x: 165, y: 230 }],
+  };
 
   function renderGraph(center, links, selectedId) {
+    const positions = graphPositions[links.length] || [];
     const lines = links.map((link, index) => {
-      const position = graphPositions[index];
+      const position = positions[index];
       const kind = relationKind(link);
       const dx = position.x - 500;
       const dy = position.y - 400;
@@ -904,8 +934,8 @@
     }).join("");
     const nodes = links.map((link, index) => {
       const doc = docsById.get(link.id);
-      const position = graphPositions[index];
-      return `<button class="graph-node" type="button" data-network-target="${escapeHtml(doc.id)}" aria-pressed="${doc.id === selectedId}" style="left:${position.x / 10}%;top:${position.y / 8}%">${coverMarkup(doc)}<strong>${escapeHtml(doc.titulo)}</strong></button>`;
+      const position = positions[index];
+      return `<button class="graph-node" type="button" data-network-target="${escapeHtml(doc.id)}" aria-label="Selecionar relação com ${escapeHtml(doc.titulo)}" title="${escapeHtml(doc.titulo)}" aria-pressed="${doc.id === selectedId}" style="left:${position.x / 10}%;top:${position.y / 8}%">${coverMarkup(doc)}<strong>${escapeHtml(truncate(doc.titulo, 46))}</strong></button>`;
     }).join("");
     return `<div class="graph"><svg viewBox="0 0 1000 800" aria-hidden="true"><defs><marker id="arrow-outgoing" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#0b4a32"/></marker><marker id="arrow-incoming" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#a47a20"/></marker><marker id="arrow-shared" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#265f86"/></marker><marker id="arrow-affinity" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#86a69b"/></marker></defs>${lines}</svg>${nodes}<button class="graph-node graph-node--center" type="button" data-open-detail="${escapeHtml(center.id)}" style="left:50%;top:50%">${coverMarkup(center)}<strong>${escapeHtml(center.titulo)}</strong></button></div>`;
   }
@@ -914,6 +944,32 @@
     if (!link) return `<aside class="network-detail"><h2>Detalhes da relação</h2>${renderEmpty("Nenhuma relação visível", "Ative um tipo de relação ou escolha outro documento central.")}</aside>`;
     const target = docsById.get(link.id);
     return `<aside class="network-detail"><h2>Detalhes da relação</h2><div class="network-detail__pair"><div>${coverMarkup(center)}<strong>${escapeHtml(center.titulo)}</strong></div><span class="network-arrow">${link.incoming && !link.outgoing ? "←" : "→"}</span><div>${coverMarkup(target)}<strong>${escapeHtml(target.titulo)}</strong></div></div><dl class="relation-facts"><div><dt>Tipo de relação</dt><dd>${escapeHtml(relationLabel(link))}</dd></div><div><dt>Direção</dt><dd>${link.outgoing ? `${escapeHtml(center.titulo)} → ${escapeHtml(target.titulo)}` : link.incoming ? `${escapeHtml(target.titulo)} → ${escapeHtml(center.titulo)}` : "Relação simétrica"}</dd></div><div><dt>Evidência</dt><dd>${escapeHtml(truncate(link.evidence || "Relação calculada a partir dos metadados e referências locais.", 420))}</dd></div>${link.page ? `<div><dt>Página</dt><dd>${link.page}</dd></div>` : ""}${link.shared ? `<div><dt>Referências compartilhadas</dt><dd>${link.shared}</dd></div>` : ""}${link.similarity ? `<div><dt>Afinidade</dt><dd>${Math.round(link.similarity * 100)}%</dd></div>` : ""}</dl><button class="primary-action" style="width:100%;margin-top:1rem" type="button" data-open-detail="${escapeHtml(target.id)}">Abrir ficha de ${escapeHtml(truncate(target.titulo, 42))} ${icon("arrow")}</button></aside>`;
+  }
+
+  function rerenderNetwork(focusSelector = "", selection = null, revealSelected = false) {
+    const sidebarTop = app.querySelector(".network-sidebar")?.scrollTop || 0;
+    const canvas = app.querySelector(".network-canvas");
+    const canvasTop = canvas?.scrollTop || 0;
+    const canvasLeft = canvas?.scrollLeft || 0;
+    render();
+    const sidebar = app.querySelector(".network-sidebar");
+    const nextCanvas = app.querySelector(".network-canvas");
+    if (sidebar) sidebar.scrollTop = sidebarTop;
+    if (nextCanvas) {
+      nextCanvas.scrollTop = canvasTop;
+      nextCanvas.scrollLeft = canvasLeft;
+      if (revealSelected) {
+        const selectedNode = nextCanvas.querySelector(".graph-node[aria-pressed='true']");
+        if (selectedNode) {
+          const nodeRect = selectedNode.getBoundingClientRect();
+          const canvasRect = nextCanvas.getBoundingClientRect();
+          nextCanvas.scrollLeft += nodeRect.left + nodeRect.width / 2 - canvasRect.left - canvasRect.width / 2;
+        }
+      }
+    }
+    const control = focusSelector ? app.querySelector(focusSelector) : null;
+    control?.focus({ preventScroll: true });
+    if (selection && control?.setSelectionRange) control.setSelectionRange(selection.start, selection.end);
   }
 
   /* Interações */
@@ -997,7 +1053,14 @@
     if (selected) {
       state.selectedId = selected.dataset.selectDoc;
       state.previewOpen = true;
-      return render();
+      render();
+      window.requestAnimationFrame(() => {
+        const focusTarget = window.matchMedia?.("(max-width: 900px)").matches
+          ? app.querySelector("[data-close-preview]")
+          : app.querySelector('.catalog-row__select[aria-pressed="true"]');
+        focusTarget?.focus({ preventScroll: true });
+      });
+      return;
     }
 
     if (event.target.closest("[data-close-preview]")) {
@@ -1016,12 +1079,15 @@
 
     const detailStep = event.target.closest("[data-detail-step]");
     if (detailStep) {
+      const direction = detailStep.dataset.detailStep;
       const sequence = detailSequence(state.selectedId);
       const current = Math.max(0, sequence.findIndex(doc => doc.id === state.selectedId));
-      const next = (current + Number(detailStep.dataset.detailStep) + sequence.length) % Math.max(1, sequence.length);
+      const next = (current + Number(direction) + sequence.length) % Math.max(1, sequence.length);
       if (sequence[next]) state.selectedId = sequence[next].id;
       render();
       scrollPanelsToStart([".detail-main", ".detail-rail"]);
+      window.scrollTo({ top: 0 });
+      window.requestAnimationFrame(() => app.querySelector(`[data-detail-step="${direction}"]`)?.focus());
       return;
     }
 
@@ -1034,10 +1100,27 @@
         state.networkId = sequence[next].id;
         state.selectedId = sequence[next].id;
         state.networkTargetId = "";
+        state.networkQuery = "";
       }
       render();
       scrollPanelsToStart([".network-sidebar", ".network-canvas", ".network-detail"]);
       return;
+    }
+
+    const networkSidebar = event.target.closest("[data-network-sidebar]");
+    if (networkSidebar) {
+      state.networkSidebarOpen = !state.networkSidebarOpen;
+      return rerenderNetwork("[data-network-sidebar]");
+    }
+
+    const networkLinkStep = event.target.closest("[data-network-link-step]");
+    if (networkLinkStep) {
+      const links = visibleNetworkLinks(state.networkId);
+      if (links.length < 2) return;
+      const current = Math.max(0, links.findIndex(link => link.id === state.networkTargetId));
+      const next = (current + Number(networkLinkStep.dataset.networkLinkStep) + links.length) % links.length;
+      state.networkTargetId = links[next].id;
+      return rerenderNetwork(`[data-network-link-step="${networkLinkStep.dataset.networkLinkStep}"]`, null, true);
     }
 
     const detail = event.target.closest("[data-open-detail]");
@@ -1117,7 +1200,10 @@
 
     const tocAction = event.target.closest("[data-toc-action]");
     if (tocAction) {
-      document.querySelectorAll(".toc-tree details").forEach(item => { item.open = tocAction.dataset.tocAction === "expand"; });
+      document.querySelectorAll(".toc-tree details").forEach(item => {
+        item.open = tocAction.dataset.tocAction === "expand";
+        if (item.dataset.tocWasOpen !== undefined) item.dataset.tocWasOpen = String(item.open);
+      });
       return;
     }
 
@@ -1126,13 +1212,15 @@
       state.networkId = openNetwork.dataset.openNetwork;
       state.selectedId = state.networkId;
       state.networkTargetId = "";
+      state.networkQuery = "";
       return setView("network");
     }
 
     const target = event.target.closest("[data-network-target]");
     if (target) {
       state.networkTargetId = target.dataset.networkTarget;
-      return render();
+      const selector = target.classList.contains("graph-node") ? ".graph-node[aria-pressed='true']" : ".network-list-button[aria-selected='true']";
+      return rerenderNetwork(selector, null, true);
     }
 
     const filterLink = event.target.closest("[data-filter-link]");
@@ -1173,7 +1261,7 @@
     if (networkFilter) {
       state.networkFilters[networkFilter.dataset.networkFilter] = networkFilter.checked;
       state.networkTargetId = "";
-      return render();
+      return rerenderNetwork(`[data-network-filter="${networkFilter.dataset.networkFilter}"]`);
     }
   });
 
@@ -1190,12 +1278,42 @@
   });
 
   app.addEventListener("input", event => {
+    const tocSearch = event.target.closest("[data-toc-search]");
+    if (tocSearch) {
+      const panel = tocSearch.closest(".rail-panel");
+      const tree = panel?.querySelector(".toc-tree");
+      if (!tree) return;
+      const value = normalize(tocSearch.value);
+      if (value && tree.dataset.searchActive !== "true") {
+        tree.dataset.searchActive = "true";
+        tree.querySelectorAll("details").forEach(item => { item.dataset.tocWasOpen = String(item.open); });
+      }
+      let count = 0;
+      [...tree.querySelectorAll("li[data-toc-label]")].reverse().forEach(item => {
+        const match = !value || item.dataset.tocLabel.includes(value);
+        if (value && match) count++;
+        const children = item.querySelector(":scope > details > ul")?.children || [];
+        const hasMatchBelow = [...children].some(child => !child.hidden);
+        item.hidden = Boolean(value && !match && !hasMatchBelow);
+        if (value && hasMatchBelow) item.querySelector(":scope > details").open = true;
+      });
+      if (!value && tree.dataset.searchActive === "true") {
+        tree.querySelectorAll("details").forEach(item => {
+          item.open = item.dataset.tocWasOpen === "true";
+          delete item.dataset.tocWasOpen;
+        });
+        delete tree.dataset.searchActive;
+      }
+      const status = panel.querySelector("[data-toc-status]");
+      status.hidden = !value;
+      status.textContent = count ? `${count} ${count === 1 ? "título encontrado" : "títulos encontrados"}.` : "Nenhum título encontrado.";
+      return;
+    }
     const networkSearch = event.target.closest("[data-network-search]");
     if (!networkSearch) return;
-    const value = normalize(networkSearch.value);
-    app.querySelectorAll(".network-list-button").forEach(button => {
-      button.hidden = value && !normalize(button.textContent).includes(value);
-    });
+    state.networkQuery = networkSearch.value;
+    const selection = { start: networkSearch.selectionStart, end: networkSearch.selectionEnd };
+    rerenderNetwork("[data-network-search]", selection);
   });
 
   document.addEventListener("keydown", event => {
@@ -1228,6 +1346,7 @@
     render();
   });
 
+  window.addEventListener?.("resize", updateSiteHeaderHeight);
   window.MeuAcervoV2 = { state, render, setView, runTextSearch };
   render();
 })();
