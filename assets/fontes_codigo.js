@@ -1,4 +1,7 @@
 // Fontes curadas por bibId em 2026-09-25. Independente dos dados gerados do catálogo.
+// Pesquisas sem resultado ou recursos indisponíveis exigem data e evidência.
+// Chave: bibId; campos: status (searched-empty/unavailable), data (AAAA-MM-DD), evidencia.
+window.PESQUISAS_CODIGO = window.PESQUISAS_CODIGO || {};
 window.FONTES_CODIGO = {
   f2026skew: [
     { tipo: "Código dos autores", titulo: "skew-adaptive_cp", url: "https://github.com/paulocmarquesf/skew-adaptive_cp", descricao: "Implementação de referência em R e dados dos experimentos.", evidencia: "PDF, p. 13; repositório do autor (o sublinhado se perde na extração do PDF)." },

@@ -3,6 +3,13 @@
 
   function cleanValue(value) {
     let text = String(value || "")
+      .replace(/\\(['`"^~=\.])\s*\{?([A-Za-z])\}?/g, (_, accent, letter) => {
+        const accents = { "'": "\u0301", "`": "\u0300", '"': "\u0308", "^": "\u0302", "~": "\u0303", "=": "\u0304", ".": "\u0307" };
+        return `${letter}${accents[accent]}`.normalize("NFC");
+      })
+      .replace(/\\c\s*\{?([cC])\}?/g, (_, letter) => letter === "C" ? "Ç" : "ç")
+      .replace(/\\(AE|ae|OE|oe|ss|L|l|O|o)(?![A-Za-z])\s*/g, (_, letter) =>
+        ({ AE: "Æ", ae: "æ", OE: "Œ", oe: "œ", ss: "ß", L: "Ł", l: "ł", O: "Ø", o: "ø" })[letter])
       .replace(/\\([&%#_])/g, "$1")
       .replace(/--/g, "–")
       .trim();
@@ -66,7 +73,7 @@
   }
 
   function personParts(name) {
-    const clean = String(name || "").trim();
+    const clean = cleanValue(name);
     if (!clean) return { family: "", given: "" };
     if (clean.includes(",")) {
       const [family, ...given] = clean.split(",");
@@ -86,6 +93,7 @@
   }
 
   function apaAuthor(name) {
+    name = cleanValue(name);
     if (isOrganization(name)) return name;
     const { family, given } = personParts(name);
     const initials = given
@@ -97,13 +105,15 @@
   }
 
   function abntAuthor(name) {
+    name = cleanValue(name);
     if (isOrganization(name)) return name.toLocaleUpperCase("pt-BR");
     const { family, given } = personParts(name);
     return `${family.toLocaleUpperCase("pt-BR")}${given ? `, ${given}` : ""}`;
   }
 
-  function joinApa(names) {
+  function joinApa(names, abbreviated = false) {
     const values = names.map(apaAuthor).filter(Boolean);
+    if (abbreviated && values.length) return `${values.join(", ")} et al.`;
     if (values.length < 2) return values[0] || "Autoria não identificada";
     if (values.length === 2) return `${values[0]} & ${values[1]}`;
     return `${values.slice(0, -1).join(", ")}, & ${values.at(-1)}`;
@@ -132,7 +142,10 @@
 
   function formatApa(record) {
     const { type, fields } = parseBibtex(record.bibtex);
-    const authors = joinApa(record.autores || []);
+    const names = (record.autores || []).map(cleanValue);
+    const abbreviated = record.autoriaAbreviada || names.some(name => /^(others|et\s+al\.?)$/i.test(name))
+      || /(?:^|\s+and\s+)others\s*$/i.test(fields.author || "");
+    const authors = joinApa(names.filter(name => !/^(others|et\s+al\.?)$/i.test(name)), abbreviated);
     const year = fields.year || "n.d.";
     const title = record.titulo || fields.title || "Sem título";
     const link = linkFor(fields);
@@ -161,7 +174,11 @@
 
   function formatAbnt(record) {
     const { type, fields } = parseBibtex(record.bibtex);
-    const authors = (record.autores || []).map(abntAuthor).filter(Boolean).join("; ") || "AUTORIA NÃO IDENTIFICADA";
+    const names = (record.autores || []).map(cleanValue);
+    const abbreviated = record.autoriaAbreviada || names.some(name => /^(others|et\s+al\.?)$/i.test(name))
+      || /(?:^|\s+and\s+)others\s*$/i.test(fields.author || "");
+    const people = names.filter(name => !/^(others|et\s+al\.?)$/i.test(name)).map(abntAuthor).filter(Boolean).join("; ");
+    const authors = people ? `${people}${abbreviated ? " et al." : ""}` : "AUTORIA NÃO IDENTIFICADA";
     const year = fields.year || "s.d.";
     const title = record.titulo || fields.title || "Sem título";
     const link = linkFor(fields);

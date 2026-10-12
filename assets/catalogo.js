@@ -12,7 +12,32 @@
   const citationExtraction = new Map((citationData.extraction || []).map(item => [item.id, item]));
   const affinityExtraction = new Map((affinityData.extraction || []).map(item => [item.id, item]));
   const loadedScripts = new Map();
+  const searchTextCache = new WeakMap();
+  const identityCache = new WeakMap();
+  const tocHtmlCache = new WeakMap();
+  const topicCache = new Map();
+  const filterValuesCache = new Map();
+  const relationCache = new Map();
+  const titleGroups = new Map();
+  const citationEdgesByDoc = new Map(docs.map(doc => [doc.id, []]));
+  const affinityEdgesByDoc = new Map(docs.map(doc => [doc.id, []]));
+  let renderCache = null;
   let toastTimer;
+
+  // Os dados são estáticos durante a sessão: indexar uma vez, reutilizar nas telas.
+  docs.forEach(doc => {
+    const title = normalize(doc.titulo);
+    if (!titleGroups.has(title)) titleGroups.set(title, []);
+    titleGroups.get(title).push(doc);
+  });
+  (citationData.edges || []).forEach(edge => {
+    citationEdgesByDoc.get(edge.source)?.push(edge);
+    if (edge.target !== edge.source) citationEdgesByDoc.get(edge.target)?.push(edge);
+  });
+  (affinityData.edges || []).forEach(edge => {
+    affinityEdgesByDoc.get(edge.source)?.push(edge);
+    if (edge.target !== edge.source) affinityEdgesByDoc.get(edge.target)?.push(edge);
+  });
 
   const preferred = docs.find(doc => normalize(doc.titulo) === "probability measure theory")
     || docs.find(doc => /probability.*measure theory/i.test(doc.titulo || ""))
@@ -63,6 +88,122 @@
     menuOpen: false,
     toast: "",
   };
+  let restoringRoute = false;
+  let lastNavigationHash = null;
+
+  function routeSnapshot() {
+    return {
+      view: state.view, doc: state.view === "network" ? state.networkId : state.selectedId,
+      tab: state.detailTab, query: state.query, filters: { ...state.filters },
+      collection: state.collectionOnly, sort: state.sort, layout: state.layout,
+      previewCollapsed: state.previewCollapsed, qualityIssue: state.qualityIssue,
+      relation: state.networkTargetId, networkQuery: state.networkQuery,
+      networkFilters: { ...state.networkFilters }, networkMode: state.networkMode || "",
+    };
+  }
+
+  function routeHash(route = routeSnapshot()) {
+    const params = new URLSearchParams();
+    params.set("view", route.view);
+    if (["detail", "network"].includes(route.view) && route.doc) params.set("doc", route.doc);
+    if (route.view === "detail" && route.tab !== "toc") params.set("tab", route.tab);
+    if (route.query) params.set("q", route.query);
+    Object.entries(route.filters).forEach(([key, value]) => { if (value) params.set(key, value); });
+    if (route.collection) params.set("collection", route.collection);
+    if (route.sort !== "title") params.set("sort", route.sort);
+    if (route.layout !== "list") params.set("layout", route.layout);
+    if (route.previewCollapsed) params.set("preview", "hidden");
+    if (route.view === "quality" && route.qualityIssue !== "all") params.set("issue", route.qualityIssue);
+    if (route.view === "network") {
+      if (route.relation) params.set("relation", route.relation);
+      if (route.networkQuery) params.set("nq", route.networkQuery);
+      Object.entries(route.networkFilters).forEach(([key, value]) => { if (!value) params.set(`n_${key}`, "0"); });
+      if (route.networkMode) params.set("ng", route.networkMode);
+    }
+    return `#${params.toString()}`;
+  }
+
+  function readRoute(hash = "") {
+    const params = new URLSearchParams(hash.replace(/^#/, ""));
+    if (hash && !params.has("view")) return null;
+    const requestedView = params.get("view") || "catalog";
+    const view = ["catalog", "collections", "detail", "network", "quality", "text"].includes(requestedView)
+      && !(onlineMode && ["quality", "text"].includes(requestedView)) ? requestedView : "catalog";
+    const doc = docsById.has(params.get("doc")) ? params.get("doc") : preferred?.id || "";
+    const choices = {
+      type: filterValues("tipo"), subject: filterValues("assunto"), subsubject: filterValues("subassunto"), year: filterValues("ano"),
+      summary: ["yes", "no"], online: ["yes", "no"], quality: ["verified", "pending"],
+      code: ["registered", "pending", "index-only", "searched-empty", "unavailable"], codeOrigin: codeOriginOptions().map(item => item.value),
+    };
+    const filters = Object.fromEntries(Object.keys(state.filters).map(key => {
+      const value = ["subject", "subsubject"].includes(key) ? canonicalTopic(params.get(key)) : params.get(key) || "";
+      return [key, choices[key].includes(value) ? value : ""];
+    }));
+    return {
+      view: ["detail", "network"].includes(view) && params.has("doc") && !docsById.has(params.get("doc")) ? "catalog" : view,
+      doc, tab: ["toc", "references", "related", "relations"].includes(params.get("tab")) ? params.get("tab") : "toc",
+      query: (params.get("q") || "").slice(0, 1000), filters,
+      collection: [...collectionDefs.map(group => group.id), "other"].includes(params.get("collection")) ? params.get("collection") : "",
+      sort: ["title", "author", "year"].includes(params.get("sort")) ? params.get("sort") : "title",
+      layout: params.get("layout") === "grid" ? "grid" : "list", previewCollapsed: params.get("preview") === "hidden",
+      qualityIssue: qualityIssues.some(issue => issue.id === params.get("issue")) ? params.get("issue") : "all",
+      relation: docsById.has(params.get("relation")) ? params.get("relation") : "", networkQuery: (params.get("nq") || "").slice(0, 1000),
+      networkFilters: Object.fromEntries(["outgoing", "incoming", "shared", "affinity"].map(key => [key, params.get(`n_${key}`) !== "0"])),
+      networkMode: ["graph", "list"].includes(params.get("ng")) ? params.get("ng") : "",
+    };
+  }
+
+  function applyRoute(route, entry = null) {
+    clearTextSearch();
+    const storedDoc = entry?.catalogueRoute && ["catalog", "collections", "quality", "text"].includes(route.view) && docsById.has(entry.route?.doc)
+      ? entry.route.doc : route.doc;
+    Object.assign(state, {
+      view: route.view, selectedId: storedDoc, networkId: storedDoc, detailTab: route.tab,
+      query: route.query, filters: route.filters, searchMode: route.view === "text" ? "content" : "metadata",
+      collectionOnly: route.collection, sort: route.sort, layout: route.layout, previewCollapsed: route.previewCollapsed,
+      qualityIssue: route.qualityIssue, networkTargetId: route.relation, networkQuery: route.networkQuery,
+      networkFilters: route.networkFilters, networkMode: route.networkMode, menuOpen: false, previewOpen: false,
+      filtersOpen: Object.entries(route.filters).some(([key, value]) => !["type", "subject"].includes(key) && value),
+      detailOrigin: route.view === "detail" && entry?.catalogueRoute ? entry.origin || null : null,
+      limit: entry?.catalogueRoute ? Math.max(60, Math.min(docs.length, Number(entry.limit) || 60)) : 60,
+      textLimit: entry?.catalogueRoute ? Math.max(30, Number(entry.textLimit) || 30) : 30,
+    });
+  }
+
+  function saveRouteContext() {
+    if (restoringRoute || !window.history?.state?.catalogueRoute) return;
+    window.history.replaceState({ ...window.history.state, ui: captureUiContext() }, "");
+  }
+
+  function syncRoute(replace = false) {
+    if (restoringRoute || !window.history?.pushState || !window.location) return;
+    const route = routeSnapshot();
+    const hash = routeHash(route);
+    const entry = { catalogueRoute: true, route, origin: state.detailOrigin, limit: state.limit, textLimit: state.textLimit, ui: captureUiContext() };
+    const previous = window.history.state?.route;
+    const typingInNetwork = route.view === "network" && previous?.view === "network"
+      && route.networkQuery !== previous.networkQuery
+      && routeHash({ ...route, networkQuery: previous.networkQuery, relation: previous.relation }) === window.location.hash;
+    if (replace || typingInNetwork || !window.history.state?.catalogueRoute || window.location.hash === hash) {
+      window.history.replaceState(entry, "", hash);
+    } else window.history.pushState(entry, "", hash);
+    lastNavigationHash = hash;
+  }
+
+  function restoreRoute() {
+    if (lastNavigationHash === window.location?.hash) return;
+    const route = readRoute(window.location?.hash || "");
+    if (!route) return;
+    lastNavigationHash = window.location?.hash || "";
+    const entry = window.history?.state;
+    restoringRoute = true;
+    applyRoute(route, entry);
+    render({ preserve: false });
+    if (entry?.catalogueRoute && entry.ui) restoreUiContext(entry.ui);
+    restoringRoute = false;
+    syncRoute(true);
+    if (state.view === "text" && state.query) void runTextSearch();
+  }
 
   function escapeHtml(value) {
     return String(value ?? "")
@@ -147,7 +288,7 @@
 
   function coverMarkup(doc, className = "") {
     if (doc?.capa) {
-      return `<img class="${className}" src="${escapeHtml(doc.capa)}" alt="Capa de ${escapeHtml(doc.titulo)}" loading="lazy">`;
+      return `<img class="${className}" src="${escapeHtml(doc.capa)}" alt="Capa de ${escapeHtml(doc.titulo)}" loading="lazy" decoding="async">`;
     }
     return `<span class="cover-placeholder ${className}" aria-hidden="true">Sem capa</span>`;
   }
@@ -161,6 +302,7 @@
   }
 
   function relationLinks(id) {
+    if (relationCache.has(id)) return relationCache.get(id);
     const map = new Map();
     const add = (neighborId, patch) => {
       if (!neighborId || neighborId === id || !docsById.has(neighborId)) return;
@@ -183,11 +325,11 @@
       });
     };
 
-    (citationData.edges || []).forEach(edge => {
+    (citationEdgesByDoc.get(id) || []).forEach(edge => {
       if (edge.source === id) add(edge.target, { outgoing: true, evidence: edge.evidence, page: edge.page });
       if (edge.target === id) add(edge.source, { incoming: true, evidence: edge.evidence, page: edge.page });
     });
-    (affinityData.edges || []).forEach(edge => {
+    (affinityEdgesByDoc.get(id) || []).forEach(edge => {
       if (edge.source === id) add(edge.target, {
         shared: Number(edge.sharedReferences) || 0,
         similarity: Number(edge.similarity) || 0,
@@ -199,11 +341,13 @@
         evidence: edge.evidence?.[0]?.reference || "",
       });
     });
-    return [...map.values()].sort((a, b) =>
+    const links = [...map.values()].sort((a, b) =>
       Number(b.outgoing || b.incoming) - Number(a.outgoing || a.incoming)
       || b.shared - a.shared
       || b.similarity - a.similarity
     );
+    relationCache.set(id, links);
+    return links;
   }
 
   function relationCount(id) {
@@ -250,6 +394,8 @@
   }
 
   function canonicalTopic(value) {
+    const key = String(value || "");
+    if (topicCache.has(key)) return topicCache.get(key);
     const aliases = {
       ia: "Inteligência Artificial",
       "inteligencia artificial": "Inteligência Artificial",
@@ -264,7 +410,9 @@
       "bayesian statistics": "Estatística Bayesiana",
       "estatistica bayesiana": "Estatística Bayesiana",
     };
-    return aliases[normalize(value)] || String(value || "").trim();
+    const topic = aliases[normalize(value)] || key.trim();
+    topicCache.set(key, topic);
+    return topic;
   }
 
   function expandSearchQuery(value) {
@@ -275,14 +423,21 @@
   }
 
   function searchableText(doc) {
+    if (searchTextCache.has(doc)) return searchTextCache.get(doc);
     const text = [doc.titulo, ...(doc.autores || []), doc.assunto, doc.subassunto,
       ...(doc.tags || []), doc.publicacao, ...(doc.sumario || []).map(item => item.titulo)].join(" ");
-    return `${normalize(text)} ${expandSearchQuery(text)}`;
+    const searchable = `${normalize(text)} ${expandSearchQuery(text)}`;
+    searchTextCache.set(doc, searchable);
+    return searchable;
   }
 
   function docIdentity(doc) {
-    const duplicates = docs.filter(item => normalize(item.titulo) === normalize(doc.titulo));
-    if (duplicates.length < 2) return "";
+    if (identityCache.has(doc)) return identityCache.get(doc);
+    const duplicates = titleGroups.get(normalize(doc.titulo)) || [];
+    if (duplicates.length < 2) {
+      identityCache.set(doc, "");
+      return "";
+    }
     const identity = item => {
       const author = Array.isArray(item.autores) ? item.autores[0] : item.autores;
       const edition = item.edicao || item.edition || String(item.bibtex || "").match(/\bedition\s*=\s*\{([^}]+)\}/i)?.[1];
@@ -290,8 +445,10 @@
         edition ? `edição ${edition}` : ""].filter(Boolean).join(" · ");
     };
     const label = identity(doc);
-    return duplicates.filter(item => identity(item) === label).length > 1
+    const display = duplicates.filter(item => identity(item) === label).length > 1
       ? `${label} · registro ${String(doc.id).slice(-6)}` : label;
+    identityCache.set(doc, display);
+    return display;
   }
 
   function codeResources(doc) {
@@ -299,8 +456,30 @@
     return Array.isArray(resources) ? resources.filter(item => /^https?:\/\//i.test(item.url || "")) : [];
   }
 
+  function authorText(doc, compact = false) {
+    const raw = Array.isArray(doc?.autores) ? doc.autores : [doc?.autores];
+    const authors = raw.filter(value => value && !/^others$/i.test(String(value).trim()));
+    const abbreviated = doc?.autoriaAbreviada || raw.some(value => /^others$/i.test(String(value || "").trim()));
+    if (!authors.length) return "Autoria não informada";
+    if (compact && authors.length > 3) return `${authors[0]} e ${authors.length - 1} coautores${abbreviated ? "; e outros" : ""}`;
+    return `${authors.join("; ")}${abbreviated ? "; e outros" : ""}`;
+  }
+
+  function codeResearch(doc) {
+    const research = window.PESQUISAS_CODIGO?.[doc?.bibId];
+    if (!research || !/^\d{4}-\d{2}-\d{2}$/.test(research.data || "") || !String(research.evidencia || "").trim()) return null;
+    const date = new Date(`${research.data}T00:00:00Z`);
+    return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === research.data ? research : null;
+  }
+
   function codeStatus(doc) {
-    return codeResources(doc).length ? "registered" : "pending";
+    const resources = codeResources(doc);
+    if (resources.some(item => codeOrigin(item) !== "index" && item.disponivel !== false)) return "registered";
+    if (resources.some(item => codeOrigin(item) === "index" && item.disponivel !== false)) return "index-only";
+    const research = codeResearch(doc);
+    if (research?.status === "unavailable" || resources.length && resources.every(item => item.disponivel === false)) return "unavailable";
+    if (research?.status === "searched-empty") return "searched-empty";
+    return "pending";
   }
 
   function codeOrigin(item) {
@@ -320,16 +499,19 @@
     ];
   }
 
-  function matchesCodeFilters(doc) {
-    if (state.filters.code && codeStatus(doc) !== state.filters.code) return false;
-    return !state.filters.codeOrigin || codeResources(doc).some(item => codeOrigin(item) === state.filters.codeOrigin);
+  function matchesCodeFilters(doc, ignoredFilter = "") {
+    if (ignoredFilter !== "code" && state.filters.code && codeStatus(doc) !== state.filters.code) return false;
+    return ignoredFilter === "codeOrigin" || !state.filters.codeOrigin || codeResources(doc).some(item => codeOrigin(item) === state.filters.codeOrigin);
   }
 
   function codeIndicator(doc) {
     const resources = codeResources(doc);
-    if (!resources.length) return "";
-    const indexesOnly = resources.every(item => codeOrigin(item) === "index");
-    return `<span class="code-indicator" title="${resources.length} recurso(s) cadastrado(s); consulte a origem e a evidência na ficha">${icon("code")}${indexesOnly ? "Índice de código" : "Recursos de código"}</span>`;
+    const status = codeStatus(doc);
+    if (status === "pending") return "";
+    const label = { registered: "Recursos de código", "index-only": "Índice de código", "searched-empty": "Pesquisa sem resultado", unavailable: "Recursos indisponíveis" }[status];
+    const evidence = codeResearch(doc)?.evidencia;
+    const title = evidence || `${resources.length} recurso(s) cadastrado(s); consulte a origem e a evidência na ficha`;
+    return `<span class="code-indicator" title="${escapeHtml(title)}">${icon("code")}${label}</span>`;
   }
 
   function activeView() {
@@ -396,7 +578,7 @@
     return {
       top: window.scrollY || 0,
       left: window.scrollX || 0,
-      panels: [".catalog-results", ".quick-preview", ".detail-main", ".detail-rail", ".network-sidebar", ".network-canvas", ".network-detail"].map(selector => {
+      panels: [".catalog-results", ".quick-preview", ".detail-main", ".detail-rail", ".network-sidebar", ".network-canvas", ".graph-scroll", ".network-detail"].map(selector => {
         const panel = app.querySelector(selector);
         return { selector, top: panel?.scrollTop || 0, left: panel?.scrollLeft || 0 };
       }),
@@ -405,6 +587,7 @@
         wasOpen: [...app.querySelectorAll(".toc-tree details")].map(item => item.dataset.tocWasOpen),
         searchActive: app.querySelector(".toc-tree")?.dataset.searchActive === "true",
         query: app.querySelector("[data-toc-search]")?.value || "",
+        hideEditorial: Boolean(app.querySelector("[data-toc-hide-editorial]")?.checked),
       },
       citations: [...app.querySelectorAll(".citation-card[data-expanded='true'] [data-expand-citation]")].map(button => button.getAttribute("aria-controls")),
       focus: selector ? {
@@ -441,10 +624,13 @@
       const tree = app.querySelector(".toc-tree");
       if (tree && context.toc.searchActive) tree.dataset.searchActive = "true";
       const search = app.querySelector("[data-toc-search]");
+      const editorial = app.querySelector("[data-toc-hide-editorial]");
+      if (editorial) editorial.checked = Boolean(context.toc.hideEditorial);
       if (search && context.toc.query) {
         search.value = context.toc.query;
         search.dispatchEvent(new Event("input", { bubbles: true }));
       }
+      if (editorial?.checked && !context.toc.query) updateTocFilter(editorial.closest(".rail-panel"));
     }
     window.scrollTo({ top: context.top, left: context.left });
     const saved = context.focus;
@@ -464,11 +650,18 @@
       state.searchMode = "metadata";
       state.detailOrigin = null;
     }
+    saveRouteContext();
     const context = preserve && app.dataset.renderedView === state.view ? captureUiContext() : null;
-    app.innerHTML = `${renderHeader()}<main id="main" class="app-main" tabindex="-1">${renderView()}</main>${state.toast ? `<div class="toast" role="status">${escapeHtml(state.toast)}</div>` : ""}`;
+    renderCache = new Map();
+    try {
+      app.innerHTML = `${renderHeader()}<main id="main" class="app-main" tabindex="-1">${renderView()}</main>${state.toast ? `<div class="toast" role="status">${escapeHtml(state.toast)}</div>` : ""}`;
+    } finally {
+      renderCache = null;
+    }
     app.dataset.renderedView = state.view;
     updateSiteHeaderHeight();
     restoreUiContext(context);
+    syncRoute();
     if (state.view === "text" && !state.textLoading) void loadVisibleTextSnippets();
   }
 
@@ -487,22 +680,100 @@
   }
 
   function filterValues(field) {
-    return unique(docs.map(doc => ["assunto", "subassunto"].includes(field) ? canonicalTopic(doc[field]) : String(doc[field] || "").trim()))
-      .sort((a, b) => a.localeCompare(b, "pt-BR", { numeric: true }));
+    if (!filterValuesCache.has(field)) {
+      filterValuesCache.set(field, unique(docs.map(doc => ["assunto", "subassunto"].includes(field) ? canonicalTopic(doc[field]) : String(doc[field] || "").trim()))
+        .sort((a, b) => a.localeCompare(b, "pt-BR", { numeric: true })));
+    }
+    return [...filterValuesCache.get(field)];
   }
 
-  function selectOptions(values, selected, emptyLabel) {
-    return `<option value="">${emptyLabel}</option>${values.map(value => `<option value="${escapeHtml(value)}" ${value === selected ? "selected" : ""}>${escapeHtml(value)}</option>`).join("")}`;
+  function subjectCategory(value) {
+    const topic = normalize(value);
+    return ["islr", "paulo orenstein"].includes(topic) ? "course" : topic === "the economist" ? "source" : "theme";
+  }
+
+  function subjectLabel(value) {
+    const category = subjectCategory(value);
+    return `${category === "course" ? "Curso: " : category === "source" ? "Origem: " : ""}${canonicalTopic(value)}`;
+  }
+
+  function selectOptions(values, selected, emptyLabel, counts = null, labelFor = value => value) {
+    const available = unique([...values, selected]).filter(value => !counts || counts.get(value) > 0 || value === selected);
+    return `${emptyLabel === null ? "" : `<option value="">${escapeHtml(emptyLabel)}</option>`}${available.map(value => `<option value="${escapeHtml(value)}" ${value === selected ? "selected" : ""}>${escapeHtml(labelFor(value))}${counts ? ` (${counts.get(value) || 0})` : ""}</option>`).join("")}`;
+  }
+
+  function metadataCandidates() {
+    if (renderCache?.has("queryDocs")) return renderCache.get("queryDocs");
+    const terms = expandSearchQuery(state.query).split(/\s+/).filter(Boolean);
+    const result = terms.length ? docs.filter(doc => {
+      const searchable = searchableText(doc);
+      return terms.every(term => searchable.includes(term));
+    }) : docs;
+    renderCache?.set("queryDocs", result);
+    return result;
+  }
+
+  function facetDocs(name) {
+    const key = `facet:${name}`;
+    if (renderCache?.has(key)) return renderCache.get(key);
+    const candidates = state.view === "text" ? state.textResults.map(hit => docsById.get(hit.id)).filter(Boolean) : metadataCandidates();
+    const result = candidates.filter(doc => matchesDocumentFilters(doc, name));
+    renderCache?.set(key, result);
+    return result;
+  }
+
+  function facetCounts(name, values) {
+    const key = `counts:${name}:${values.join("\u0000")}`;
+    if (renderCache?.has(key)) return renderCache.get(key);
+    const candidates = facetDocs(name);
+    const counts = new Map(values.map(value => [value, 0]));
+    const requested = new Map();
+    values.forEach(value => {
+      const valueKey = ["subject", "subsubject"].includes(name) ? canonicalTopic(value)
+        : ["summary", "online"].includes(name) ? value === "yes" ? "yes" : "no"
+        : name === "quality" ? value === "verified" ? "verified" : "pending" : value;
+      if (!requested.has(valueKey)) requested.set(valueKey, []);
+      requested.get(valueKey).push(value);
+    });
+    candidates.forEach(doc => {
+      const field = { type: "tipo", subject: "assunto", subsubject: "subassunto", year: "ano" }[name];
+      const docValues = name === "codeOrigin" ? unique(codeResources(doc).map(codeOrigin))
+        : [name === "code" ? codeStatus(doc)
+          : name === "quality" ? doc.bibStatus === "verificado" ? "verified" : "pending"
+          : name === "summary" ? doc.sumario?.length ? "yes" : "no"
+          : name === "online" ? isOnline(doc) ? "yes" : "no"
+          : ["subject", "subsubject"].includes(name) ? canonicalTopic(doc[field])
+          : name === "year" ? String(doc.ano || "") : doc[field]];
+      if (!field && !["codeOrigin", "code", "quality", "summary", "online"].includes(name)) {
+        values.forEach(value => counts.set(value, counts.get(value) + 1));
+      } else docValues.forEach(valueKey => (requested.get(valueKey) || []).forEach(value => counts.set(value, counts.get(value) + 1)));
+    });
+    renderCache?.set(key, counts);
+    return counts;
+  }
+
+  function matchesFacetValue(doc, name, value) {
+    if (name === "type") return doc.tipo === value;
+    if (name === "subject") return canonicalTopic(doc.assunto) === canonicalTopic(value);
+    if (name === "subsubject") return canonicalTopic(doc.subassunto) === canonicalTopic(value);
+    if (name === "year") return String(doc.ano || "") === value;
+    if (name === "summary") return Boolean(doc.sumario?.length) === (value === "yes");
+    if (name === "online") return isOnline(doc) === (value === "yes");
+    if (name === "quality") return (doc.bibStatus === "verificado") === (value === "verified");
+    if (name === "code") return codeStatus(doc) === value;
+    if (name === "codeOrigin") return codeResources(doc).some(item => codeOrigin(item) === value);
+    return true;
   }
 
   function renderFilterBar(count, textSearch = false) {
+    const previewVisible = window.matchMedia?.("(max-width: 900px)").matches ? state.previewOpen : !state.previewCollapsed;
     return `
       <section class="filter-bar" aria-label="Filtros do catálogo">
         ${filterSelect("type", filterValues("tipo"), "Tipo")}
         ${filterSelect("subject", filterValues("assunto"), "Assunto")}
         <button class="more-filters secondary-action" type="button" data-more-filters aria-expanded="${state.filtersOpen}" aria-controls="extra-filters">${icon("filter")} Mais filtros</button>
         <strong class="filter-count" role="status">${count} ${textSearch ? "resultados" : count === 1 ? "documento" : "documentos"}</strong>
-        ${textSearch || state.view !== "catalog" || !count ? "" : `<button class="preview-toggle secondary-action" type="button" data-toggle-preview aria-expanded="${!state.previewCollapsed}" aria-controls="quick-preview">${icon("document")} ${state.previewCollapsed ? "Mostrar prévia" : "Recolher prévia"}</button><div class="view-toggle" role="group" aria-label="Modo de visualização"><button type="button" data-layout="list" aria-pressed="${state.layout === "list"}" aria-label="Lista">${icon("list")}</button><button type="button" data-layout="grid" aria-pressed="${state.layout === "grid"}" aria-label="Grade">${icon("grid")}</button></div>`}
+        ${textSearch || state.view !== "catalog" || !count ? "" : `<button class="preview-toggle secondary-action" type="button" data-toggle-preview aria-expanded="${previewVisible}" aria-controls="quick-preview">${icon("document")} ${previewVisible ? "Recolher prévia" : "Mostrar prévia"}</button><div class="view-toggle" role="group" aria-label="Modo de visualização"><button type="button" data-layout="list" aria-pressed="${state.layout === "list"}" aria-label="Lista">${icon("list")}</button><button type="button" data-layout="grid" aria-pressed="${state.layout === "grid"}" aria-label="Grade">${icon("grid")}</button></div>`}
         <label class="sort-control"><span>Ordenar por</span>${textSearch ? `<select disabled><option>Relevância</option></select>` : `<select data-sort><option value="title" ${state.sort === "title" ? "selected" : ""}>Título (A–Z)</option><option value="author" ${state.sort === "author" ? "selected" : ""}>Autor</option><option value="year" ${state.sort === "year" ? "selected" : ""}>Ano recente</option></select>`}</label>
         <div id="extra-filters" class="filter-panel" ${state.filtersOpen ? "" : "hidden"}>
           ${filterSelect("subsubject", filterValues("subassunto"), "Subassunto")}
@@ -510,7 +781,7 @@
           ${choiceFilter("summary", "Sumário", [["yes", "Com sumário"], ["no", "Sem sumário"]])}
           ${choiceFilter("online", "Leitura oficial", [["yes", "Disponível online"], ["no", onlineMode ? "Sem link oficial cadastrado" : "Somente local"]])}
           ${choiceFilter("quality", onlineMode ? "Bibliografia" : "Qualidade", [["verified", "Bibliografia verificada"], ["pending", onlineMode ? "Bibliografia pendente" : "Revisão pendente"]])}
-          ${choiceFilter("code", "Código e implementações", [["registered", "Com código/recursos cadastrados"], ["pending", "Sem pesquisa registrada"]])}
+          ${choiceFilter("code", "Código e implementações", [["registered", "Com implementações/recursos cadastrados"], ["index-only", "Somente índice de descoberta"], ["pending", "Sem pesquisa registrada"], ["searched-empty", "Pesquisado, sem recurso localizado"], ["unavailable", "Recurso indisponível"]])}
           ${choiceFilter("codeOrigin", "Origem do código", codeOriginOptions().map(item => [item.value, item.label]))}
         </div>
         ${renderActiveFilters()}
@@ -518,14 +789,17 @@
   }
 
   function choiceFilter(name, label, choices) {
-    return `<label class="filter-control"><span class="sr-only">${label}</span><select data-filter="${name}"><option value="">${label}</option>${choices.map(([value, text]) => `<option value="${escapeHtml(value)}" ${state.filters[name] === value ? "selected" : ""}>${escapeHtml(text)}</option>`).join("")}</select></label>`;
+    const labels = new Map(choices);
+    const values = unique([...labels.keys(), state.filters[name]]);
+    const counts = facetCounts(name, values);
+    return `<label class="filter-control"><span class="sr-only">${label}</span><select data-filter="${name}">${selectOptions(values, state.filters[name], label, counts, value => labels.get(value) || value)}</select></label>`;
   }
 
   function renderActiveFilters() {
     const labels = { type: "Tipo", subject: "Assunto", subsubject: "Subassunto", year: "Ano", summary: "Sumário", online: "Leitura oficial", quality: onlineMode ? "Bibliografia" : "Qualidade", code: "Código", codeOrigin: "Origem" };
-    const values = { summary: {yes: "Com sumário", no: "Sem sumário"}, online: {yes: "Online", no: onlineMode ? "Sem link cadastrado" : "Somente local"}, quality: {verified: "Verificada", pending: "Pendente"}, code: {registered: "Recursos cadastrados", pending: "Sem pesquisa registrada"}, codeOrigin: Object.fromEntries(codeOriginOptions().map(item => [item.value, item.label])) };
+    const values = { summary: {yes: "Com sumário", no: "Sem sumário"}, online: {yes: "Online", no: onlineMode ? "Sem link cadastrado" : "Somente local"}, quality: {verified: "Verificada", pending: "Pendente"}, code: {registered: "Recursos cadastrados", "index-only": "Somente índice de descoberta", pending: "Sem pesquisa registrada", "searched-empty": "Pesquisado, sem recurso localizado", unavailable: "Recurso indisponível"}, codeOrigin: Object.fromEntries(codeOriginOptions().map(item => [item.value, item.label])) };
     const chips = Object.entries(state.filters).filter(([, value]) => value).map(([key, value]) => {
-      const text = values[key]?.[value] || (["subject", "subsubject"].includes(key) ? canonicalTopic(value) : value);
+      const text = values[key]?.[value] || (key === "type" ? typeLabel(value) : key === "subject" ? subjectLabel(value) : key === "subsubject" ? canonicalTopic(value) : value);
       return `<button type="button" class="filter-chip" data-remove-filter="${key}" aria-label="Remover filtro ${labels[key]}: ${escapeHtml(text)}">${labels[key]}: ${escapeHtml(text)} <span aria-hidden="true">×</span></button>`;
     });
     if (state.query) chips.unshift(`<button type="button" class="filter-chip" data-remove-filter="query" aria-label="Remover busca">Busca: ${escapeHtml(state.query)} <span aria-hidden="true">×</span></button>`);
@@ -535,42 +809,36 @@
 
   function filterSelect(name, values, label, className = "") {
     const selected = ["subject", "subsubject"].includes(name) ? canonicalTopic(state.filters[name]) : state.filters[name];
-    return `<label class="filter-control ${className}"><span class="sr-only">${label}</span><select data-filter="${name}">${selectOptions(values, selected, label)}</select></label>`;
+    const allValues = unique([...values, selected]);
+    const counts = facetCounts(name, allValues);
+    const options = name === "subject" ? `<option value="">${escapeHtml(label)}</option>${[
+      ["theme", "Temas"], ["course", "Cursos e materiais"], ["source", "Origem editorial"],
+    ].map(([category, title]) => {
+      const groupValues = allValues.filter(value => subjectCategory(value) === category && (counts.get(value) > 0 || value === selected));
+      return groupValues.length ? `<optgroup label="${title}">${selectOptions(groupValues, groupValues.includes(selected) ? selected : "", null, counts, subjectLabel)}</optgroup>` : "";
+    }).join("")}` : selectOptions(values, selected, label, counts, value => name === "type" ? typeLabel(value) : value);
+    return `<label class="filter-control ${className}"><span class="sr-only">${label}</span><select data-filter="${name}">${options}</select></label>`;
   }
 
   function hasFilters() {
     return Boolean(state.query || state.collectionOnly || Object.values(state.filters).some(Boolean));
   }
 
-  function matchesDocumentFilters(doc) {
+  function matchesDocumentFilters(doc, ignoredFilter = "") {
     if (state.collectionOnly && collectionFor(doc) !== state.collectionOnly) return false;
-    if (state.filters.type && doc.tipo !== state.filters.type) return false;
-    if (state.filters.subject && canonicalTopic(doc.assunto) !== canonicalTopic(state.filters.subject)) return false;
-    if (state.filters.subsubject && canonicalTopic(doc.subassunto) !== canonicalTopic(state.filters.subsubject)) return false;
-    if (state.filters.year && String(doc.ano || "") !== state.filters.year) return false;
-    if (state.filters.summary === "yes" && !doc.sumario?.length) return false;
-    if (state.filters.summary === "no" && doc.sumario?.length) return false;
-    if (state.filters.online === "yes" && !isOnline(doc)) return false;
-    if (state.filters.online === "no" && isOnline(doc)) return false;
-    if (state.filters.quality === "verified" && doc.bibStatus !== "verificado") return false;
-    if (state.filters.quality === "pending" && doc.bibStatus === "verificado") return false;
-    return matchesCodeFilters(doc);
+    if (Object.entries(state.filters).some(([name, value]) => value && name !== ignoredFilter && !["code", "codeOrigin"].includes(name) && !matchesFacetValue(doc, name, value))) return false;
+    return matchesCodeFilters(doc, ignoredFilter);
   }
 
   function filteredDocs() {
-    const query = expandSearchQuery(state.query);
-    const terms = query.split(/\s+/).filter(Boolean);
-    const result = docs.filter(doc => {
-      if (!matchesDocumentFilters(doc)) return false;
-      if (!terms.length) return true;
-      const searchable = searchableText(doc);
-      return terms.every(term => searchable.includes(term));
-    });
+    if (renderCache?.has("filteredDocs")) return renderCache.get("filteredDocs");
+    const result = metadataCandidates().filter(doc => matchesDocumentFilters(doc));
     result.sort((a, b) => {
       if (state.sort === "author") return (a.autores?.[0] || "").localeCompare(b.autores?.[0] || "", "pt-BR");
       if (state.sort === "year") return Number(b.ano || 0) - Number(a.ano || 0) || a.titulo.localeCompare(b.titulo, "pt-BR");
       return a.titulo.localeCompare(b.titulo, "pt-BR");
     });
+    renderCache?.set("filteredDocs", result);
     return result;
   }
 
@@ -607,6 +875,7 @@
         selectedId: control?.dataset.openDetail || state.selectedId, previewOpen: state.previewOpen,
         previewCollapsed: state.previewCollapsed, filtersOpen: state.filtersOpen,
         networkId: state.networkId, networkTargetId: state.networkTargetId, networkQuery: state.networkQuery,
+        networkFilters: { ...state.networkFilters }, networkMode: state.networkMode || "",
       },
       ui: captureUiContext(),
     };
@@ -634,7 +903,7 @@
     const total = sequence.length;
     const attribute = context === "network" ? "data-network-step" : "data-detail-step";
     const label = context === "network" ? "Navegar entre redes bibliográficas" : "Navegar entre fichas";
-    return `<nav class="document-stepper" aria-label="${label}"><span><strong>${total ? index + 1 : 0}</strong> de ${total}</span><button type="button" ${attribute}="-1" aria-label="Documento anterior">‹</button><button type="button" ${attribute}="1" aria-label="Próximo documento">›</button></nav>`;
+    return `<nav class="document-stepper" aria-label="${label}"><span>Documento <strong>${total ? index + 1 : 0}</strong> de ${total}</span><button type="button" ${attribute}="-1" aria-label="Documento anterior" ${!total || index === 0 ? "disabled" : ""}>‹</button><button type="button" ${attribute}="1" aria-label="Próximo documento" ${!total || index >= total - 1 ? "disabled" : ""}>›</button></nav>`;
   }
 
   function scrollPanelsToStart(selectors) {
@@ -647,7 +916,6 @@
   function renderCatalog() {
     const result = filteredDocs();
     const selectedIndex = result.findIndex(doc => doc.id === state.selectedId);
-    if (selectedIndex >= state.limit) state.limit = Math.ceil((selectedIndex + 1) / 60) * 60;
     const visible = result.slice(0, state.limit);
     const selected = result[selectedIndex] || visible[0] || null;
     if (selected && state.selectedId !== selected.id) state.selectedId = selected.id;
@@ -665,8 +933,8 @@
   function renderCatalogRow(doc) {
     const relations = relationCount(doc.id);
     return `<div class="catalog-row" data-selected="${doc.id === state.selectedId}">
-      <button class="catalog-row__select" type="button" data-select-doc="${escapeHtml(doc.id)}" aria-pressed="${doc.id === state.selectedId}" aria-label="Selecionar ${escapeHtml(doc.titulo)} para prévia"></button>
-      <div class="document-cell">${coverMarkup(doc)}<div><h3 title="${escapeHtml(doc.titulo)}">${escapeHtml(doc.titulo)}</h3><p>${doc.ano ? `${escapeHtml(doc.ano)} · ` : ""}${escapeHtml((doc.autores || []).join("; ") || "Autoria não informada")}</p>${codeIndicator(doc)}</div></div>
+      <button class="catalog-row__select" type="button" data-select-doc="${escapeHtml(doc.id)}" aria-pressed="${doc.id === state.selectedId}" title="${escapeHtml(doc.titulo)} — ${escapeHtml(authorText(doc))}" aria-label="Selecionar ${escapeHtml(doc.titulo)} para prévia"></button>
+      <div class="document-cell">${coverMarkup(doc)}<div class="document-cell__text"><h3 title="${escapeHtml(doc.titulo)}">${escapeHtml(doc.titulo)}</h3><p class="document-authors" title="${escapeHtml(authorText(doc))}">${escapeHtml(authorText(doc, true))}</p><small class="document-year">${escapeHtml(docIdentity(doc) || (doc.ano ? `Ano: ${doc.ano}` : "Ano não informado"))}</small>${codeIndicator(doc)}<div class="card-meta"><span class="card-meta__item">${escapeHtml(typeLabel(doc.tipo))}</span><span class="card-meta__item" title="${escapeHtml(canonicalTopic(doc.subassunto))}">${escapeHtml(canonicalTopic(doc.assunto) || "Sem assunto")}</span>${doc.sumario?.length ? `<span class="card-meta__item">${icon("toc")} Sumário</span>` : ""}${isOnline(doc) ? `<span class="card-meta__item">${icon("online")} Leitura online</span>` : ""}</div></div></div>
       <span class="type-badge"><span class="sr-only">Tipo: </span>${escapeHtml(typeLabel(doc.tipo))}</span>
       <span class="cell-main"><span class="sr-only">Assunto: </span>${escapeHtml(canonicalTopic(doc.assunto) || "Não informado")}<small><span class="sr-only">Subassunto: </span>${escapeHtml(canonicalTopic(doc.subassunto))}</small></span>
       <span class="status-chip ${doc.sumario?.length ? "status-chip--ok" : "status-chip--muted"}"><span class="sr-only">Sumário: </span>${icon("toc")} ${doc.sumario?.length ? "Sim" : "Não"}</span>
@@ -676,10 +944,35 @@
     </div>`;
   }
 
+  function updateCatalogSelection() {
+    const result = filteredDocs();
+    const index = result.findIndex(doc => doc.id === state.selectedId);
+    const preview = app.querySelector("#quick-preview");
+    const selected = app.querySelector(`[data-select-doc="${state.selectedId}"]`);
+    if (state.view !== "catalog" || index < 0 || !preview || !selected) return render();
+    saveRouteContext();
+    const context = captureUiContext();
+    preview.outerHTML = renderQuickPreview(result[index], index + 1, result.length);
+    app.querySelectorAll(".catalog-row__select").forEach(button => {
+      const active = button.dataset.selectDoc === state.selectedId;
+      button.setAttribute("aria-pressed", String(active));
+      button.closest(".catalog-row").dataset.selected = String(active);
+    });
+    const mobile = window.matchMedia?.("(max-width: 900px)").matches;
+    const visible = mobile ? state.previewOpen : !state.previewCollapsed;
+    const toggle = app.querySelector("[data-toggle-preview]");
+    if (toggle) {
+      toggle.setAttribute("aria-expanded", String(visible));
+      toggle.innerHTML = `${icon("document")} ${visible ? "Recolher prévia" : "Mostrar prévia"}`;
+    }
+    restoreUiContext(context);
+    syncRoute();
+  }
+
   function renderQuickPreview(doc, index, total) {
     return `<aside id="quick-preview" class="quick-preview" data-open="${state.previewOpen}" aria-label="Prévia rápida">
-      <header class="preview-heading"><h2>${icon("document")} Prévia rápida</h2><span>${Math.max(1, index)} de ${total} <button class="icon-button" type="button" data-preview-step="-1" aria-label="Documento anterior">‹</button><button class="icon-button" type="button" data-preview-step="1" aria-label="Próximo documento">›</button><button class="icon-button" type="button" data-close-preview aria-label="Fechar prévia">${icon("close")}</button></span></header>
-      <div class="preview-document">${coverMarkup(doc, "preview-document__cover")}<div><h2>${escapeHtml(doc.titulo)}</h2><dl class="preview-meta"><dt>Tipo</dt><dd>${escapeHtml(typeLabel(doc.tipo))}</dd><dt>Assunto</dt><dd>${escapeHtml(canonicalTopic(doc.assunto) || "Não informado")}</dd><dt>Subassunto</dt><dd>${escapeHtml(canonicalTopic(doc.subassunto) || "Não informado")}</dd><dt>Ano</dt><dd>${escapeHtml(doc.ano || "Não informado")}</dd></dl><div class="tag-list">${displayTags(doc).map(tag => `<span class="tag">${escapeHtml(tag)}</span>`).join("")}</div></div></div>
+      <header class="preview-heading"><h2>${icon("document")} Prévia rápida</h2><span>${Math.max(1, index)} de ${total} <button class="icon-button" type="button" data-preview-step="-1" aria-label="Documento anterior" ${index <= 1 ? "disabled" : ""}>‹</button><button class="icon-button" type="button" data-preview-step="1" aria-label="Próximo documento" ${index >= total ? "disabled" : ""}>›</button><button class="icon-button" type="button" data-close-preview aria-label="Fechar prévia">${icon("close")}</button></span></header>
+      <div class="preview-document">${coverMarkup(doc, "preview-document__cover")}<div><h2>${escapeHtml(doc.titulo)}</h2><dl class="preview-meta"><dt>Autoria</dt><dd>${escapeHtml(authorText(doc))}</dd><dt>Tipo</dt><dd>${escapeHtml(typeLabel(doc.tipo))}</dd><dt>Assunto</dt><dd>${escapeHtml(canonicalTopic(doc.assunto) || "Não informado")}</dd><dt>Subassunto</dt><dd>${escapeHtml(canonicalTopic(doc.subassunto) || "Não informado")}</dd><dt>Ano</dt><dd>${escapeHtml(doc.ano || "Não informado")}</dd>${docIdentity(doc) ? `<dt>Edição / registro</dt><dd>${escapeHtml(docIdentity(doc))}</dd>` : ""}</dl><div class="tag-list">${displayTags(doc).map(tag => `<span class="tag">${escapeHtml(tag)}</span>`).join("")}</div></div></div>
       <div class="preview-statuses">
         <div class="preview-status">${icon("toc")}<div><strong>Sumário</strong><span>${doc.sumario?.length ? `${doc.sumario.length} seções` : "Não disponível"}</span></div></div>
         <div class="preview-status">${icon("online")}<div><strong>Leitura oficial</strong><span>${isOnline(doc) ? "Disponível" : "Não registrada"}</span></div></div>
@@ -760,23 +1053,61 @@
   function snippet(value, terms) {
     const compact = String(value || "").replace(/\s+/g, " ").trim();
     if (!compact) return "Página sem texto extraível.";
-    const folded = normalize(compact);
-    const positions = terms.map(term => folded.indexOf(term)).filter(index => index >= 0);
-    const position = positions.length ? Math.min(...positions) : 0;
-    const ratio = folded.length ? position / folded.length : 0;
-    const original = Math.floor(compact.length * ratio);
-    const start = Math.max(0, original - 90);
-    const end = Math.min(compact.length, original + 290);
+    const folded = compact.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("pt-BR");
+    const occurrences = terms.flatMap(term => {
+      const positions = [];
+      let position = folded.indexOf(term);
+      while (position >= 0 && positions.length < 200) {
+        positions.push({ position, term });
+        position = folded.indexOf(term, position + Math.max(1, term.length));
+      }
+      return positions;
+    });
+    let start = 0;
+    let bestScore = -Infinity;
+    occurrences.forEach(({ position }) => {
+      const candidate = Math.max(0, position - 90);
+      const nearby = occurrences.filter(hit => hit.position >= candidate && hit.position < candidate + 380);
+      const fragment = compact.slice(candidate, candidate + 380);
+      const damaged = (fragment.match(/�|(?:Ã.|Â.|ïð|ñò)/g) || []).length;
+      const score = new Set(nearby.map(hit => hit.term)).size * 100 + nearby.length * 10 - damaged * 8;
+      if (score > bestScore) { bestScore = score; start = candidate; }
+    });
+    if (start > 0) {
+      const boundary = compact.indexOf(" ", start);
+      if (boundary >= 0 && boundary - start < 25) start = boundary + 1;
+    }
+    let end = Math.min(compact.length, start + 380);
+    if (end < compact.length) {
+      const boundary = compact.lastIndexOf(" ", end);
+      if (boundary > end - 25) end = boundary;
+    }
     return `${start ? "…" : ""}${compact.slice(start, end)}${end < compact.length ? "…" : ""}`;
   }
 
   function highlight(value, terms) {
-    let escaped = escapeHtml(value);
-    terms.forEach(term => {
-      const pattern = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      escaped = escaped.replace(new RegExp(`(${pattern})`, "gi"), "<mark>$1</mark>");
-    });
-    return escaped;
+    const text = String(value || "").normalize("NFC");
+    const positions = [];
+    let folded = "";
+    let offset = 0;
+    for (const character of text) {
+      const part = character.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("pt-BR");
+      for (let index = 0; index < part.length; index++) positions.push({ start: offset, end: offset + character.length });
+      folded += part;
+      offset += character.length;
+    }
+    const words = unique(terms.map(term => String(term || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("pt-BR")))
+      .sort((a, b) => b.length - a.length).map(term => term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    if (!words.length) return escapeHtml(text);
+    let cursor = 0;
+    let html = "";
+    for (const match of folded.matchAll(new RegExp(words.join("|"), "g"))) {
+      const start = positions[match.index].start;
+      const end = positions[match.index + match[0].length - 1].end;
+      html += `${escapeHtml(text.slice(cursor, start))}<mark>${escapeHtml(text.slice(start, end))}</mark>`;
+      cursor = end;
+    }
+    return html + escapeHtml(text.slice(cursor));
   }
 
   async function runTextSearch() {
@@ -878,7 +1209,7 @@
     return filtered.slice(0, state.textLimit).map(hit => {
       const doc = docsById.get(hit.id);
       return `<article class="text-row">
-        <div class="document-cell">${coverMarkup(doc)}<div><h3>${escapeHtml(doc.titulo)}</h3><p>${escapeHtml((doc.autores || []).join("; ") || "Autoria não informada")}</p></div></div>
+        <div class="document-cell">${coverMarkup(doc)}<div class="document-cell__text"><h3 title="${escapeHtml(doc.titulo)}">${escapeHtml(doc.titulo)}</h3><p class="document-authors" title="${escapeHtml(authorText(doc))}">${escapeHtml(authorText(doc, true))}</p></div></div>
         <p class="text-snippet">${hit.snippet === undefined ? "Carregando prévia do trecho…" : highlight(hit.snippet, hit.terms)}</p>
         <p class="text-pages">Página ${hit.page}${hit.pages.length > 1 ? `<br>e mais ${hit.pages.length - 1}` : ""}</p>
         <div class="text-actions">${onlineMode ? "" : `<button class="primary-action" type="button" data-open-pdf="${escapeHtml(doc.id)}" data-page="${hit.page}">Ir ao trecho</button>`}<button class="secondary-action" type="button" data-open-detail="${escapeHtml(doc.id)}">Abrir ficha</button></div>
@@ -901,52 +1232,75 @@
       id: "statistics",
       title: "Estatística e Probabilidade",
       description: "Fundamentos teóricos, inferência, probabilidade e modelagem estatística.",
-      match: /estat|probab|matem|infer/i,
       icon: "quality",
     },
     {
       id: "computing",
       title: "Computação e Ciência de Dados",
       description: "Algoritmos, programação, aprendizado de máquina e computação científica.",
-      match: /machine|aprendizado|aprendizagem|program|computa|dados|intelig|deep|islr|torch|python|redes/i,
       icon: "monitor",
     },
     {
       id: "economics",
       title: "Economia e Métodos Quantitativos",
       description: "Economia, finanças, séries temporais e métodos aplicados.",
-      match: /econom|finan|mercado|política|politica/i,
       icon: "collection",
     },
     {
       id: "communication",
       title: "Comunicação e Visualização",
       description: "Escrita acadêmica, design, jornalismo e visualização de dados.",
-      match: /comunica|visual|jornal|design|latex|escrita/i,
       icon: "document",
     },
   ];
 
   function collectionFor(doc) {
-    const subject = canonicalTopic(doc.assunto);
-    const primary = collectionDefs.find(group => group.match.test(subject));
-    if (primary) return primary.id;
-    const text = `${canonicalTopic(doc.subassunto)} ${displayTags(doc, 100).join(" ")}`;
-    return collectionDefs.find(group => group.match.test(text))?.id || "other";
+    // Agrupamento de interface: preserva os assuntos e as tags curados na fonte.
+    const subjects = {
+      estatistica: "statistics", matematica: "statistics",
+      "aprendizado de maquina": "computing", "inteligencia artificial": "computing", programacao: "computing",
+      computacao: "computing", "ciencia de dados": "computing", islr: "computing", "paulo orenstein": "computing",
+      economia: "economics", econometria: "economics", financas: "economics",
+      "comunicacao cientifica": "communication", comunicacao: "communication",
+      "teoria de graficos": "communication", gramatica: "communication", "visualizacao de dados": "communication",
+    };
+    const primary = subjects[normalize(canonicalTopic(doc.assunto))];
+    if (primary) return primary;
+    const subsubjects = {
+      visualizacoes: "communication", "design de visualizacoes": "communication", "design de mapas": "communication",
+      "escrita academica": "communication", latex: "communication", "portugues brasileiro": "communication",
+      "algebra linear": "statistics", analise: "statistics", calculo: "statistics", probabilidade: "statistics",
+      python: "computing", r: "computing", llms: "computing", transformers: "computing",
+      microeconomia: "economics", macroeconomia: "economics", financas: "economics", contabilidade: "economics",
+    };
+    return subsubjects[normalize(canonicalTopic(doc.subassunto))]
+      || displayTags(doc, 100).map(tag => subjects[normalize(tag)] || subsubjects[normalize(tag)]).find(Boolean) || "other";
+  }
+
+  function getCollectionGroups(result = filteredDocs()) {
+    const groups = collectionDefs.map(def => ({ ...def, docs: result.filter(doc => collectionFor(doc) === def.id) }));
+    const otherDocs = result.filter(doc => collectionFor(doc) === "other");
+    if (otherDocs.length) groups.push({ id: "other", title: "Outros campos", description: "Obras de áreas não abrangidas pelas coleções temáticas principais.", icon: "catalog", docs: otherDocs });
+    return groups;
+  }
+
+  function renderCollectionFacet(name, label, field) {
+    const selected = name === "subject" ? canonicalTopic(state.filters.subject) : state.filters[name];
+    const values = unique([...filterValues(field), selected]);
+    const counts = facetCounts(name, values);
+    const available = values.filter(value => counts.get(value) > 0 || value === selected);
+    const text = value => name === "type" ? typeLabel(value) : subjectLabel(value);
+    return `<fieldset class="facet-group"><legend>${label} — escolha um</legend><label><input type="radio" name="collection-${name}" data-collection-${name}="" ${!selected ? "checked" : ""}>${name === "subject" ? "Todos os assuntos" : "Todos os tipos"} (${facetDocs(name).length})</label>${available.map(value => `<label><input type="radio" name="collection-${name}" data-collection-${name}="${escapeHtml(value)}" ${selected === value ? "checked" : ""}>${escapeHtml(text(value))} (${counts.get(value) || 0})</label>`).join("")}</fieldset>`;
   }
 
   function renderCollections() {
     const result = filteredDocs();
-    const groups = collectionDefs.map(def => ({ ...def, docs: result.filter(doc => collectionFor(doc) === def.id) }));
-    const assigned = new Set(groups.flatMap(group => group.docs.map(doc => doc.id)));
-    const otherDocs = result.filter(doc => !assigned.has(doc.id));
-    if (otherDocs.length) groups.push({ id: "other", title: "Outros campos", description: "Obras de áreas não abrangidas pelas coleções temáticas principais.", icon: "catalog", docs: otherDocs });
-    const subjects = unique(docs.map(doc => canonicalTopic(doc.assunto))).sort((a, b) => a.localeCompare(b, "pt-BR"));
+    const groups = getCollectionGroups(result);
     const cards = groups.map(renderCollectionCard).filter(Boolean).join("");
     return `${renderModeStrip()}${renderFilterBar(result.length)}
       <div class="page-shell">
         <div class="collections-layout">
-          <aside class="facet-panel"><div class="facet-panel__head"><h2>Filtros</h2><button type="button" data-clear-filters>Limpar filtros</button></div><fieldset class="facet-group"><legend>Assunto — escolha um</legend><label><input type="radio" name="collection-subject" data-collection-subject="" ${!state.filters.subject ? "checked" : ""}>Todos os assuntos (${docs.length})</label>${subjects.map(subject => `<label><input type="radio" name="collection-subject" data-collection-subject="${escapeHtml(subject)}" ${canonicalTopic(state.filters.subject) === subject ? "checked" : ""}>${escapeHtml(subject)} (${docs.filter(doc => canonicalTopic(doc.assunto) === subject).length})</label>`).join("")}</fieldset><fieldset class="facet-group"><legend>Tipo — escolha um</legend><label><input type="radio" name="collection-type" data-collection-type="" ${!state.filters.type ? "checked" : ""}>Todos os tipos (${docs.length})</label>${filterValues("tipo").map(type => `<label><input type="radio" name="collection-type" data-collection-type="${escapeHtml(type)}" ${state.filters.type === type ? "checked" : ""}>${escapeHtml(typeLabel(type))} (${docs.filter(doc => doc.tipo === type).length})</label>`).join("")}</fieldset></aside>
+          <aside class="facet-panel"><div class="facet-panel__head"><h2>Filtros</h2><button type="button" data-clear-filters>Limpar filtros</button></div>${renderCollectionFacet("subject", "Assunto", "assunto")}${renderCollectionFacet("type", "Tipo", "tipo")}</aside>
           <section><header class="page-title"><div><h1>Coleções</h1><p>Explore o acervo por grandes áreas sustentadas pelos metadados reais.</p></div></header><div class="collection-grid">${cards || renderEmpty("Nenhuma coleção corresponde aos filtros", "Limpe um filtro ou escolha valores mais amplos.")}</div></section>
         </div>
       </div>`;
@@ -956,7 +1310,7 @@
     const items = group.docs;
     const featured = items.filter(doc => doc.capa).slice(0, 2);
     if (!items.length) return "";
-    return `<article class="collection-card" data-collection-id="${escapeHtml(group.id)}"><header class="collection-card__head"><span class="collection-card__icon">${icon(group.icon)}</span><div><h2>${escapeHtml(group.title)}</h2><p>${escapeHtml(group.description)}</p></div><span class="collection-card__count">${items.length} documentos</span></header><div class="collection-books">${featured.map(doc => `<button class="collection-book" type="button" data-open-detail="${escapeHtml(doc.id)}">${coverMarkup(doc)}<span><strong>${escapeHtml(doc.titulo)}</strong><span>${escapeHtml(canonicalTopic(doc.assunto))}<br>${escapeHtml(canonicalTopic(doc.subassunto))}</span><span class="type-badge">${escapeHtml(typeLabel(doc.tipo))}</span></span></button>`).join("")}</div><button class="collection-card__open" type="button" data-open-collection="${escapeHtml(group.id)}">Ver ${items.length} documentos →</button></article>`;
+    return `<article class="collection-card" data-collection-id="${escapeHtml(group.id)}"><header class="collection-card__head"><span class="collection-card__icon">${icon(group.icon)}</span><div><h2>${escapeHtml(group.title)}</h2><p>${escapeHtml(group.description)}</p></div><span class="collection-card__count">${items.length} documentos</span></header><div class="collection-books">${featured.map(doc => `<button class="collection-book" type="button" data-open-detail="${escapeHtml(doc.id)}">${coverMarkup(doc)}<span><strong>${escapeHtml(doc.titulo)}</strong><span>${escapeHtml(subjectLabel(doc.assunto))}<br>${escapeHtml(canonicalTopic(doc.subassunto))}</span><span class="type-badge">${escapeHtml(typeLabel(doc.tipo))}</span></span></button>`).join("")}</div><button class="collection-card__open" type="button" data-open-collection="${escapeHtml(group.id)}">Ver ${items.length} documentos →</button></article>`;
   }
 
   /* Qualidade */
@@ -1038,7 +1392,7 @@
     const mostRelevant = issues[0];
     const priority = mostRelevant ? reviewPriority(mostRelevant, doc) : "Informativa";
     const issueChip = issue => `<span class="status-chip ${reviewPriority(issue, doc) === "Alta" ? "status-chip--danger" : reviewPriority(issue, doc) === "Média" ? "status-chip--warn" : "status-chip--muted"}">${escapeHtml(issue.label)}</span>`;
-    return `<article class="review-row"><div class="document-cell">${coverMarkup(doc)}<div><h3>${escapeHtml(doc.titulo)}</h3><p>${escapeHtml((doc.autores || []).join("; ") || typeLabel(doc.tipo))}</p></div></div><span class="type-badge">${escapeHtml(typeLabel(doc.tipo))}</span><div class="review-row__issues"><div class="problem-list">${issues.slice(0, 2).map(issueChip).join("")}</div><details class="review-issues-extra"><summary>Ver ${issues.length === 1 ? "o ponto de atenção" : `todos os ${issues.length} pontos`}</summary><ul>${issues.map(issue => `<li>${issueChip(issue)}<p>${escapeHtml(issueObservation(issue, doc))}</p></li>`).join("")}</ul></details></div><div class="cell-main review-observation"><strong class="review-priority">${priority === "Informativa" ? "Cobertura informativa" : `Prioridade ${priority.toLocaleLowerCase("pt-BR")}`}</strong><p>${escapeHtml(mostRelevant ? issueObservation(mostRelevant, doc) : "Nenhuma pendência registrada.")}</p></div><button class="secondary-action" type="button" aria-label="Abrir ficha de ${escapeHtml(doc.titulo)}" data-open-detail="${escapeHtml(doc.id)}">Abrir ficha</button></article>`;
+    return `<article class="review-row"><div class="document-cell">${coverMarkup(doc)}<div class="document-cell__text"><h3 title="${escapeHtml(doc.titulo)}">${escapeHtml(doc.titulo)}</h3><p class="document-authors" title="${escapeHtml(authorText(doc))}">${escapeHtml(authorText(doc, true))}</p></div></div><span class="type-badge">${escapeHtml(typeLabel(doc.tipo))}</span><div class="review-row__issues"><div class="problem-list">${issues.slice(0, 2).map(issueChip).join("")}</div><details class="review-issues-extra"><summary><span class="review-issues-show">Ver ${issues.length === 1 ? "o ponto de atenção" : `todos os ${issues.length} pontos`}</span><span class="review-issues-hide">Recolher ${issues.length === 1 ? "ponto de atenção" : "pontos de atenção"}</span></summary><ul>${issues.map(issue => `<li>${issueChip(issue)}<p>${escapeHtml(issueObservation(issue, doc))}</p></li>`).join("")}</ul></details></div><div class="cell-main review-observation"><strong class="review-priority">${priority === "Informativa" ? "Cobertura informativa" : `Prioridade ${priority.toLocaleLowerCase("pt-BR")}`}</strong><p>${escapeHtml(mostRelevant ? issueObservation(mostRelevant, doc) : "Nenhuma pendência registrada.")}</p></div><button class="secondary-action" type="button" aria-label="Abrir ficha de ${escapeHtml(doc.titulo)}" data-open-detail="${escapeHtml(doc.id)}">Abrir ficha</button></article>`;
   }
 
   /* Ficha do documento */
@@ -1054,10 +1408,11 @@
     return `<section class="detail-page">
       <header class="detail-toolbar"><nav class="breadcrumbs" aria-label="Navegação estrutural"><button type="button" data-back-origin aria-label="Voltar à lista de origem">‹ Voltar</button><button type="button" data-view="catalog">${icon("home")} Catálogo</button><span>›</span><button type="button" data-filter-link="subject" data-value="${escapeHtml(doc.assunto || "")}">${escapeHtml(canonicalTopic(doc.assunto) || "Sem assunto")}</button><span>›</span><button type="button" data-filter-link="subsubject" data-value="${escapeHtml(doc.subassunto || "")}">${escapeHtml(canonicalTopic(doc.subassunto) || "Sem subassunto")}</button></nav><div class="detail-toolbar__navigation"><span class="detail-toolbar__title" title="${escapeHtml(doc.titulo)}">${escapeHtml(doc.titulo)}</span>${renderDocumentStepper(sequence, doc.id, "detail")}</div></header>
       <div class="detail-main">
-        <section class="detail-hero">${coverMarkup(doc, "detail-cover")}<div class="detail-identity"><div class="detail-title"><span class="type-badge">${escapeHtml(typeLabel(doc.tipo))}</span><h1>${escapeHtml(doc.titulo)}</h1><p class="detail-authors">${escapeHtml((doc.autores || []).join("; ") || "Autoria não informada")}</p><div class="detail-subjects"><span>Assunto</span><strong>${escapeHtml(canonicalTopic(doc.assunto) || "Não informado")}</strong><span>Subassunto</span><strong>${escapeHtml(canonicalTopic(doc.subassunto) || "Não informado")}</strong></div><div class="tag-list">${displayTags(doc, 6).map(tag => `<span class="tag">${escapeHtml(tag)}</span>`).join("")}</div></div>${renderActionGroups(doc)}</div></section>
+        <nav class="detail-mobile-shortcuts" aria-label="Atalhos da ficha"><button class="detail-mobile-shortcut" type="button" data-detail-jump="toc">${icon("toc")} Sumário</button><button class="detail-mobile-shortcut" type="button" data-detail-jump="code">${icon("code")} Código</button><button class="detail-mobile-shortcut" type="button" data-detail-jump="biblio">${icon("document")} Dados</button><button class="detail-mobile-shortcut" type="button" data-detail-jump="citations">${icon("quote")} Citações</button></nav>
+        <section class="detail-hero">${coverMarkup(doc, "detail-cover")}<div class="detail-identity"><div class="detail-title"><span class="type-badge">${escapeHtml(typeLabel(doc.tipo))}</span><h1>${escapeHtml(doc.titulo)}</h1><p class="detail-authors">${escapeHtml(authorText(doc))}</p><div class="detail-subjects"><span>Assunto</span><strong>${escapeHtml(canonicalTopic(doc.assunto) || "Não informado")}</strong><span>Subassunto</span><strong>${escapeHtml(canonicalTopic(doc.subassunto) || "Não informado")}</strong></div><div class="tag-list">${displayTags(doc, 6).map(tag => `<span class="tag">${escapeHtml(tag)}</span>`).join("")}</div></div>${renderActionGroups(doc)}</div></section>
         ${renderCodeResources(doc)}
-        <section class="detail-section"><h2>${icon("document")} Identificação bibliográfica</h2><div class="biblio-grid">${biblioRow(biblioItem("Título", doc.titulo), biblioItem("Tipo de documento", typeLabel(doc.tipo)))}${biblioRow(biblioItem("Autor(es)", (doc.autores || []).join("; ")), biblioItem("Assunto", doc.assunto))}${biblioRow(biblioItem("Ano", doc.ano), biblioItem("Subassunto", doc.subassunto))}${biblioRow(biblioItem("Publicação", doc.publicacao), biblioItem("Páginas", doc.paginas))}${biblioRow(biblioItem("Qualidade bibliográfica", doc.bibStatus === "verificado" ? "Verificada" : "Pendente"), biblioItem("Fonte da verificação", doc.bibFonte))}</div></section>
-        <section class="detail-section"><h2>${icon("quote")} Formatos de referência</h2><div class="citation-grid">${formats.map(format => renderCitationCard(doc, format)).join("")}</div></section>
+        <section id="detail-biblio" class="detail-section" tabindex="-1"><h2>${icon("document")} Identificação bibliográfica</h2><div class="biblio-grid">${biblioRow(biblioItem("Título", doc.titulo), biblioItem("Tipo de documento", typeLabel(doc.tipo)))}${biblioRow(biblioItem("Autor(es)", authorText(doc)), biblioItem("Assunto", doc.assunto))}${biblioRow(biblioItem("Ano", doc.ano), biblioItem("Subassunto", doc.subassunto))}${biblioRow(biblioItem("Publicação", doc.publicacao), biblioItem("Páginas", doc.paginas))}${biblioRow(biblioItem("Qualidade bibliográfica", doc.bibStatus === "verificado" ? "Verificada" : "Pendente"), biblioItem("Fonte da verificação", doc.bibFonte))}</div></section>
+        <section id="detail-citations" class="detail-section" tabindex="-1"><h2>${icon("quote")} Formatos de referência</h2><div class="citation-grid">${formats.map(format => renderCitationCard(doc, format)).join("")}</div></section>
       </div>
       <aside class="detail-rail">
         <div class="detail-tabs" role="tablist" aria-label="Informações complementares do documento">
@@ -1080,9 +1435,16 @@
 
   function renderCodeResources(doc) {
     const resources = codeResources(doc);
-    if (!resources.length) return `<section class="detail-section code-resources code-resources--pending"><h2>${icon("code")} Código e implementações</h2><p class="code-resources__intro">Pesquisa não registrada: ainda não há fontes cadastradas para esta obra. Isso não significa que não existam implementações.</p></section>`;
+    const research = codeResearch(doc);
+    const researchNote = research ? `<p class="code-resources__intro">Última pesquisa registrada: ${escapeHtml(research.data)}. Evidência: ${escapeHtml(research.evidencia)}</p>` : "";
+    if (!resources.length) {
+      const message = codeStatus(doc) === "searched-empty" ? "Pesquisa registrada sem implementação encontrada nas fontes consultadas. Isso não comprova que não existam outras implementações."
+        : codeStatus(doc) === "unavailable" ? "A última pesquisa registrou um recurso indisponível. Consulte a evidência abaixo."
+        : "Pesquisa não registrada: ainda não há fontes cadastradas para esta obra. Isso não significa que não existam implementações.";
+      return `<section id="detail-codes" class="detail-section code-resources code-resources--pending" tabindex="-1"><h2>${icon("code")} Código e implementações</h2><p class="code-resources__intro">${message}</p>${researchNote}</section>`;
+    }
     const origins = codeOriginOptions();
-    return `<section class="detail-section code-resources"><h2>${icon("code")} Código e implementações <span class="type-badge">${resources.length} recurso(s)</span></h2><p class="code-resources__intro">Recursos cadastrados com a evidência da associação. Um índice ajuda a descobrir implementações, mas não é uma implementação verificada. Confirme a edição e as instruções do recurso antes de usar.</p><div class="code-resources__grid">${resources.map(item => `<a class="code-resource" href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer"><span class="code-resource__type">${escapeHtml(item.tipo)}</span><strong>${escapeHtml(item.titulo)} ${icon("external")}</strong><span>${escapeHtml(item.descricao)}</span><small>Origem: ${escapeHtml(origins.find(origin => origin.value === codeOrigin(item)).label)} · classificação pelo tipo cadastrado</small><small>Evidência: ${escapeHtml(item.evidencia || "Não informada")}</small><span class="sr-only">Abre em uma nova aba</span></a>`).join("")}</div></section>`;
+    return `<section id="detail-codes" class="detail-section code-resources" tabindex="-1"><h2>${icon("code")} Código e implementações <span class="type-badge">${resources.length} recurso(s)</span></h2><p class="code-resources__intro">Recursos cadastrados com a evidência da associação. Um índice ajuda a descobrir implementações, mas não é uma implementação verificada. Confirme a edição e as instruções do recurso antes de usar.</p>${researchNote}<div class="code-resources__grid">${resources.map(item => `<a class="code-resource" href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer"><span class="code-resource__type">${escapeHtml(item.tipo)}${item.disponivel === false ? " · indisponível na última revisão" : ""}</span><strong>${escapeHtml(item.titulo)} ${icon("external")}</strong><span>${escapeHtml(item.descricao)}</span><small>Origem: ${escapeHtml(origins.find(origin => origin.value === codeOrigin(item)).label)} · classificação pelo tipo cadastrado</small><small>Evidência: ${escapeHtml(item.evidencia || "Não informada")}</small><span class="sr-only">Abre em uma nova aba</span></a>`).join("")}</div></section>`;
   }
 
   function biblioItem(label, value) {
@@ -1102,7 +1464,7 @@
 
   function detailTab(id, iconName, label, count = null) {
     const selected = state.detailTab === id;
-    return `<button id="detail-tab-${id}" type="button" role="tab" data-detail-tab="${id}" aria-selected="${selected}" aria-controls="detail-panel" tabindex="${selected ? 0 : -1}">${icon(iconName)} <span>${label}${count !== null ? ` <b>${count}</b>` : ""}</span></button>`;
+    return `<button id="detail-tab-${id}" type="button" role="tab" data-detail-tab="${id}" aria-selected="${selected}" aria-controls="detail-panel" tabindex="${selected ? 0 : -1}">${icon(iconName)} <span class="detail-tab__label">${label}</span>${count !== null ? `<b class="detail-tab__count" aria-label="${count} documentos">${count}</b>` : ""}</button>`;
   }
 
   function renderDetailRail(doc, citations, related, relations) {
@@ -1141,14 +1503,44 @@
     return `<ul>${nodes.map((node, index) => {
       const content = `<span>${escapeHtml(node.titulo)}</span>`;
       const label = escapeHtml(normalize(node.titulo));
-      if (node.children.length) return `<li data-toc-label="${label}"><details ${depth === 1 && index < 4 ? "open" : ""}><summary>${content}</summary>${renderTocNodes(node.children, depth + 1)}</details></li>`;
-      return `<li data-toc-label="${label}"><div class="toc-leaf">${content}</div></li>`;
+      const editorial = /^(?:\d+ )?(?:cover|title page|copyright|contents|table of contents|list of (?:figures|tables)|foreword|preface|acknowledg(?:e)?ments|capa|frontispicio|(?:folha|pagina) de rosto|pagina de creditos|sumario|prefacio|agradecimentos?|lista de (?:figuras|tabelas))$/.test(normalize(node.titulo));
+      if (node.children.length) return `<li data-toc-label="${label}" data-toc-editorial="${editorial}"><details ${depth === 1 && index < 4 ? "open" : ""}><summary>${content}</summary>${renderTocNodes(node.children, depth + 1)}</details></li>`;
+      return `<li data-toc-label="${label}" data-toc-editorial="${editorial}"><div class="toc-leaf">${content}</div></li>`;
     }).join("")}</ul>`;
   }
 
   function renderTocPanel(doc) {
     if (!doc.sumario?.length) return `<section class="rail-panel"><header class="rail-panel__head"><h2>${icon("toc")} Sumário</h2></header>${renderEmpty("Sumário indisponível", onlineMode ? "Nenhum sumário cadastrado para esta obra." : "Nenhum sumário em Markdown foi associado a esta obra.")}</section>`;
-    return `<section class="rail-panel"><header class="rail-panel__head"><h2>${icon("toc")} Sumário</h2><span><button type="button" data-toc-action="expand">Expandir tudo</button> | <button type="button" data-toc-action="collapse">Recolher tudo</button></span></header><label class="toc-search">${icon("search")}<span class="sr-only">Buscar título no sumário</span><input type="search" data-toc-search aria-controls="detail-toc-tree" placeholder="Buscar título no sumário…" autocomplete="off"></label><p class="toc-search__status" data-toc-status role="status" aria-live="polite" hidden></p><div id="detail-toc-tree" class="toc-tree">${renderTocNodes(buildToc(doc.sumario))}</div></section>`;
+    if (!tocHtmlCache.has(doc.sumario)) tocHtmlCache.set(doc.sumario, renderTocNodes(buildToc(doc.sumario)));
+    return `<section class="rail-panel"><header class="rail-panel__head"><h2>${icon("toc")} Sumário</h2><span><button type="button" data-toc-action="expand">Expandir tudo</button> | <button type="button" data-toc-action="collapse">Recolher tudo</button></span></header><label class="toc-search">${icon("search")}<span class="sr-only">Buscar título no sumário</span><input type="search" data-toc-search aria-controls="detail-toc-tree" placeholder="Buscar título no sumário…" autocomplete="off"></label><label class="toc-editorial-toggle"><input type="checkbox" data-toc-hide-editorial> Ocultar elementos editoriais (capa, prefácio e listas)</label><p class="toc-search__status" data-toc-status role="status" aria-live="polite" hidden></p><div id="detail-toc-tree" class="toc-tree">${tocHtmlCache.get(doc.sumario)}</div></section>`;
+  }
+
+  function updateTocFilter(panel) {
+    const tree = panel?.querySelector(".toc-tree");
+    if (!tree) return;
+    const value = normalize(panel.querySelector("[data-toc-search]")?.value);
+    const hideEditorial = Boolean(panel.querySelector("[data-toc-hide-editorial]")?.checked);
+    if (value && tree.dataset.searchActive !== "true") {
+      tree.dataset.searchActive = "true";
+      tree.querySelectorAll("details").forEach(item => { item.dataset.tocWasOpen = String(item.open); });
+    }
+    let count = 0;
+    [...tree.querySelectorAll("li[data-toc-label]")].reverse().forEach(item => {
+      const allowed = !hideEditorial || item.dataset.tocEditorial !== "true";
+      const match = allowed && (!value || item.dataset.tocLabel.includes(value));
+      if (value && match) count++;
+      const children = item.querySelector(":scope > details > ul")?.children || [];
+      const hasMatchBelow = [...children].some(child => !child.hidden);
+      item.hidden = !match && !hasMatchBelow;
+      if (value && hasMatchBelow) item.querySelector(":scope > details").open = true;
+    });
+    if (!value && tree.dataset.searchActive === "true") {
+      tree.querySelectorAll("details").forEach(item => { item.open = item.dataset.tocWasOpen === "true"; delete item.dataset.tocWasOpen; });
+      delete tree.dataset.searchActive;
+    }
+    const status = panel.querySelector("[data-toc-status]");
+    status.hidden = !value;
+    status.textContent = count ? `${count} ${count === 1 ? "título encontrado" : "títulos encontrados"}.` : "Nenhum título encontrado.";
   }
 
   /* Rede bibliográfica */
@@ -1180,11 +1572,12 @@
     const targetIndex = target ? links.findIndex(link => link.id === target.id) : -1;
     const windowStart = targetIndex < 0 ? 0 : Math.floor(targetIndex / 6) * 6;
     const visible = links.slice(windowStart, windowStart + 6);
+    const networkMode = state.networkMode || (window.matchMedia?.("(max-width: 900px)").matches ? "list" : "graph");
     return `${renderModeStrip(`<button type="button" aria-pressed="true">${icon("relations")} Relações bibliográficas</button>`)}
-      <section class="network-page" data-sidebar-open="${state.networkSidebarOpen}">
+      <section class="network-page" data-sidebar-open="${state.networkSidebarOpen}" data-network-mode="${networkMode}">
         <button class="network-sidebar-toggle" type="button" data-network-sidebar aria-expanded="${state.networkSidebarOpen}" aria-controls="network-sidebar">${icon("filter")} Explorar relações <span>${links.length}</span></button>
         <aside class="network-sidebar" id="network-sidebar"><h2>Explorar relações</h2><div class="relation-types"><strong>Tipo de relação</strong>${networkFilter("outgoing", "Cita", "line-key")}${networkFilter("incoming", "É citado por", "line-key--incoming")}${networkFilter("shared", "Referências compartilhadas", "line-key--shared")}${networkFilter("affinity", "Afinidade temática", "line-key--affinity")}</div><label class="global-search" style="margin-bottom:.8rem">${icon("search")}<input type="search" data-network-search value="${escapeHtml(state.networkQuery)}" aria-label="Buscar obras relacionadas" placeholder="Buscar na rede…"></label><p><strong>Obras relacionadas (${links.length})</strong></p><div class="network-list">${links.length ? links.map(link => renderNetworkListButton(link, target?.id)).join("") : renderEmpty("Nenhuma obra encontrada", "Revise a busca ou ative outros tipos de relação.")}</div></aside>
-        <section class="network-canvas"><header class="network-canvas__head"><div><h1>Rede bibliográfica</h1><p>Obras relacionadas a “${escapeHtml(center.titulo)}”</p></div>${renderDocumentStepper(sequence, center.id, "network")}</header><nav class="network-relations-nav" aria-label="Navegar entre obras relacionadas"><span>${target ? `${targetIndex + 1} de ${links.length} relações · ${windowStart + 1}–${Math.min(windowStart + 6, links.length)} no gráfico` : "Nenhuma relação visível"}</span><div><button type="button" data-network-link-step="-1" aria-label="Relação anterior" ${links.length < 2 ? "disabled" : ""}>‹</button><button type="button" data-network-link-step="1" aria-label="Próxima relação" ${links.length < 2 ? "disabled" : ""}>›</button></div></nav><p class="network-canvas__hint">Deslize horizontalmente para explorar o gráfico.</p>${renderGraph(center, visible, target?.id)}</section>
+        <section class="network-canvas"><header class="network-canvas__head"><div><h1>Rede bibliográfica</h1><p>Obras relacionadas a “${escapeHtml(center.titulo)}”</p></div>${renderDocumentStepper(sequence, center.id, "network")}</header><div class="network-view-toggle" role="group" aria-label="Visualização das relações"><button type="button" data-network-mode-choice="list" aria-pressed="${networkMode === "list"}">${icon("list")} Lista</button><button type="button" data-network-mode-choice="graph" aria-pressed="${networkMode === "graph"}">${icon("relations")} Gráfico</button></div><nav class="network-relations-nav" aria-label="Navegar entre obras relacionadas"><span>${target ? `Relação ${targetIndex + 1} de ${links.length}${networkMode === "graph" ? ` · ${windowStart + 1}–${Math.min(windowStart + 6, links.length)} no gráfico` : ""}` : "Nenhuma relação visível"}</span><div><button type="button" data-network-link-step="-1" aria-label="Relação anterior" ${targetIndex <= 0 ? "disabled" : ""}>‹</button><button type="button" data-network-link-step="1" aria-label="Próxima relação" ${targetIndex < 0 || targetIndex >= links.length - 1 ? "disabled" : ""}>›</button></div></nav><p class="network-canvas__hint">No modo gráfico, deslize horizontalmente dentro da área da rede.</p><div class="network-results-list">${links.length ? links.map(link => renderNetworkListButton(link, target?.id)).join("") : renderEmpty("Nenhuma relação visível", "Revise os tipos de relação e a busca.")}</div><div class="graph-scroll" tabindex="0" role="region" aria-label="Gráfico das relações bibliográficas">${renderGraph(center, visible, target?.id)}</div></section>
         ${renderNetworkDetail(center, target)}
       </section>`;
   }
@@ -1246,7 +1639,7 @@
     const arrow = mutual || (!link.outgoing && !link.incoming) ? "↔" : link.outgoing ? "→" : "←";
     const kind = (link.outgoing || link.incoming) && !mutual ? "Citação direta" : relationLabel(link);
     const direction = mutual ? `${center.titulo} ↔ ${target.titulo}` : link.outgoing ? `${center.titulo} → ${target.titulo}` : link.incoming ? `${target.titulo} → ${center.titulo}` : "Relação simétrica";
-    return `<aside class="network-detail"><h2>Detalhes da relação</h2><div class="network-detail__pair"><div>${pair(center)}</div><span class="network-arrow">${arrow}</span><div>${pair(target)}</div></div><dl class="relation-facts"><div><dt>Tipo de relação</dt><dd>${escapeHtml(kind)}</dd></div><div><dt>Direção</dt><dd>${escapeHtml(direction)}</dd></div>${evidence}${link.shared ? `<div><dt>Referências compartilhadas</dt><dd>${link.shared}</dd></div>` : ""}${link.similarity ? `<div><dt>Afinidade</dt><dd>${Math.round(link.similarity * 100)}%</dd></div>` : ""}</dl><button class="primary-action" style="width:100%;margin-top:1rem" type="button" data-open-detail="${escapeHtml(target.id)}">Abrir ficha de ${escapeHtml(truncate(target.titulo, 42))} ${icon("arrow")}</button></aside>`;
+    return `<aside id="network-detail" class="network-detail" tabindex="-1"><button class="network-detail__back" type="button" data-network-return-list>‹ Voltar às obras relacionadas</button><h2>Detalhes da relação</h2><div class="network-detail__pair"><div>${pair(center)}</div><span class="network-arrow">${arrow}</span><div>${pair(target)}</div></div><dl class="relation-facts"><div><dt>Tipo de relação</dt><dd>${escapeHtml(kind)}</dd></div><div><dt>Direção</dt><dd>${escapeHtml(direction)}</dd></div>${evidence}${link.shared ? `<div><dt>Referências compartilhadas</dt><dd>${link.shared}</dd></div>` : ""}${link.similarity ? `<div><dt>Afinidade</dt><dd>${Math.round(link.similarity * 100)}%</dd></div>` : ""}</dl><button class="primary-action" style="width:100%;margin-top:1rem" type="button" data-open-detail="${escapeHtml(target.id)}">Abrir ficha de ${escapeHtml(truncate(target.titulo, 42))} ${icon("arrow")}</button></aside>`;
   }
 
   function rerenderNetwork(focusSelector = "", selection = null, revealSelected = false) {
@@ -1254,9 +1647,12 @@
     const canvas = app.querySelector(".network-canvas");
     const canvasTop = canvas?.scrollTop || 0;
     const canvasLeft = canvas?.scrollLeft || 0;
+    const graphLeft = app.querySelector(".graph-scroll")?.scrollLeft || 0;
     render();
     const sidebar = app.querySelector(".network-sidebar");
     const nextCanvas = app.querySelector(".network-canvas");
+    const graphScroll = app.querySelector(".graph-scroll");
+    if (graphScroll) graphScroll.scrollLeft = graphLeft;
     if (sidebar) sidebar.scrollTop = sidebarTop;
     if (nextCanvas) {
       nextCanvas.scrollTop = canvasTop;
@@ -1265,8 +1661,8 @@
         const selectedNode = nextCanvas.querySelector(".graph-node[aria-pressed='true']");
         if (selectedNode) {
           const nodeRect = selectedNode.getBoundingClientRect();
-          const canvasRect = nextCanvas.getBoundingClientRect();
-          nextCanvas.scrollLeft += nodeRect.left + nodeRect.width / 2 - canvasRect.left - canvasRect.width / 2;
+          const canvasRect = (graphScroll || nextCanvas).getBoundingClientRect();
+          if (graphScroll && graphScroll.scrollWidth > graphScroll.clientWidth) graphScroll.scrollLeft += nodeRect.left + nodeRect.width / 2 - canvasRect.left - canvasRect.width / 2;
         }
       }
     }
@@ -1326,6 +1722,26 @@
   }
 
   app.addEventListener("click", event => {
+    const shortcut = event.target.closest("[data-detail-jump]");
+    if (shortcut) {
+      const target = shortcut.dataset.detailJump;
+      if (target === "toc" && state.detailTab !== "toc") {
+        state.detailTab = "toc";
+        render({ preserve: false });
+      }
+      window.requestAnimationFrame(() => {
+        const selector = { toc: ".detail-rail", code: "#detail-codes", biblio: "#detail-biblio", citations: "#detail-citations" }[target];
+        const section = selector ? app.querySelector(selector) : null;
+        section?.scrollIntoView({ block: "start" });
+        (target === "toc" ? app.querySelector("[data-toc-search]") || app.querySelector("#detail-panel") : section)?.focus({ preventScroll: true });
+      });
+      return;
+    }
+    const networkMode = event.target.closest("[data-network-mode-choice]");
+    if (networkMode) {
+      state.networkMode = networkMode.dataset.networkModeChoice === "graph" ? "graph" : "list";
+      return rerenderNetwork(`[data-network-mode-choice="${state.networkMode}"]`);
+    }
     const viewButton = event.target.closest("[data-view]");
     if (viewButton) return setView(viewButton.dataset.view);
 
@@ -1334,8 +1750,11 @@
       return render();
     }
     if (event.target.closest("[data-toggle-preview]")) {
-      state.previewCollapsed = !state.previewCollapsed;
-      state.previewOpen = !state.previewCollapsed;
+      if (window.matchMedia?.("(max-width: 900px)").matches) state.previewOpen = !state.previewOpen;
+      else {
+        state.previewCollapsed = !state.previewCollapsed;
+        state.previewOpen = !state.previewCollapsed;
+      }
       return render();
     }
     const removedFilter = event.target.closest("[data-remove-filter]");
@@ -1388,9 +1807,8 @@
     const selected = event.target.closest("[data-select-doc]");
     if (selected) {
       state.selectedId = selected.dataset.selectDoc;
-      state.previewOpen = true;
-      state.previewCollapsed = false;
-      render();
+      if (window.matchMedia?.("(max-width: 900px)").matches) state.previewOpen = true;
+      updateCatalogSelection();
       window.requestAnimationFrame(() => {
         const focusTarget = window.matchMedia?.("(max-width: 900px)").matches
           ? app.querySelector("[data-close-preview]")
@@ -1402,6 +1820,7 @@
 
     if (event.target.closest("[data-close-preview]")) {
       state.previewOpen = false;
+      if (!window.matchMedia?.("(max-width: 900px)").matches) state.previewCollapsed = true;
       return render();
     }
 
@@ -1409,9 +1828,12 @@
     if (previewStep) {
       const result = filteredDocs();
       const current = Math.max(0, result.findIndex(doc => doc.id === state.selectedId));
-      const next = (current + Number(previewStep.dataset.previewStep) + result.length) % Math.max(1, result.length);
-      if (result[next]) state.selectedId = result[next].id;
-      return render();
+      const next = current + Number(previewStep.dataset.previewStep);
+      if (result[next]) {
+        state.selectedId = result[next].id;
+        if (next >= state.limit) state.limit = Math.ceil((next + 1) / 60) * 60;
+      }
+      return updateCatalogSelection();
     }
 
     const detailStep = event.target.closest("[data-detail-step]");
@@ -1419,7 +1841,7 @@
       const direction = detailStep.dataset.detailStep;
       const sequence = detailSequence(state.selectedId);
       const current = Math.max(0, sequence.findIndex(doc => doc.id === state.selectedId));
-      const next = (current + Number(direction) + sequence.length) % Math.max(1, sequence.length);
+      const next = current + Number(direction);
       if (sequence[next]) state.selectedId = sequence[next].id;
       render({ preserve: false });
       scrollPanelsToStart([".detail-main", ".detail-rail"]);
@@ -1432,7 +1854,7 @@
     if (networkStep) {
       const sequence = networkSequence(state.networkId);
       const current = Math.max(0, sequence.findIndex(doc => doc.id === state.networkId));
-      const next = (current + Number(networkStep.dataset.networkStep) + sequence.length) % Math.max(1, sequence.length);
+      const next = current + Number(networkStep.dataset.networkStep);
       if (sequence[next]) {
         state.networkId = sequence[next].id;
         state.selectedId = sequence[next].id;
@@ -1455,7 +1877,8 @@
       const links = visibleNetworkLinks(state.networkId);
       if (links.length < 2) return;
       const current = Math.max(0, links.findIndex(link => link.id === state.networkTargetId));
-      const next = (current + Number(networkLinkStep.dataset.networkLinkStep) + links.length) % links.length;
+      const next = current + Number(networkLinkStep.dataset.networkLinkStep);
+      if (!links[next]) return;
       state.networkTargetId = links[next].id;
       return rerenderNetwork(`[data-network-link-step="${networkLinkStep.dataset.networkLinkStep}"]`, null, true);
     }
@@ -1579,7 +2002,22 @@
     if (target) {
       state.networkTargetId = target.dataset.networkTarget;
       const selector = target.classList.contains("graph-node") ? ".graph-node[aria-pressed='true']" : ".network-list-button[aria-pressed='true']";
-      return rerenderNetwork(selector, null, true);
+      rerenderNetwork(selector, null, true);
+      if (window.matchMedia?.("(max-width: 900px)").matches && app.querySelector(".network-page")?.dataset.networkMode === "list") {
+        window.requestAnimationFrame(() => {
+          const detail = app.querySelector("#network-detail");
+          detail?.scrollIntoView({ block: "start" });
+          detail?.focus({ preventScroll: true });
+        });
+      }
+      return;
+    }
+
+    if (event.target.closest("[data-network-return-list]")) {
+      const selected = app.querySelector(".network-results-list .network-list-button[aria-pressed='true']");
+      selected?.scrollIntoView({ block: "start" });
+      selected?.focus({ preventScroll: true });
+      return;
     }
 
     const filterLink = event.target.closest("[data-filter-link]");
@@ -1590,6 +2028,8 @@
   });
 
   app.addEventListener("change", event => {
+    const editorial = event.target.closest("[data-toc-hide-editorial]");
+    if (editorial) return updateTocFilter(editorial.closest(".rail-panel"));
     const filter = event.target.closest("[data-filter]");
     if (filter) {
       state.filters[filter.dataset.filter] = filter.value;
@@ -1641,34 +2081,7 @@
   app.addEventListener("input", event => {
     const tocSearch = event.target.closest("[data-toc-search]");
     if (tocSearch) {
-      const panel = tocSearch.closest(".rail-panel");
-      const tree = panel?.querySelector(".toc-tree");
-      if (!tree) return;
-      const value = normalize(tocSearch.value);
-      if (value && tree.dataset.searchActive !== "true") {
-        tree.dataset.searchActive = "true";
-        tree.querySelectorAll("details").forEach(item => { item.dataset.tocWasOpen = String(item.open); });
-      }
-      let count = 0;
-      [...tree.querySelectorAll("li[data-toc-label]")].reverse().forEach(item => {
-        const match = !value || item.dataset.tocLabel.includes(value);
-        if (value && match) count++;
-        const children = item.querySelector(":scope > details > ul")?.children || [];
-        const hasMatchBelow = [...children].some(child => !child.hidden);
-        item.hidden = Boolean(value && !match && !hasMatchBelow);
-        if (value && hasMatchBelow) item.querySelector(":scope > details").open = true;
-      });
-      if (!value && tree.dataset.searchActive === "true") {
-        tree.querySelectorAll("details").forEach(item => {
-          item.open = item.dataset.tocWasOpen === "true";
-          delete item.dataset.tocWasOpen;
-        });
-        delete tree.dataset.searchActive;
-      }
-      const status = panel.querySelector("[data-toc-status]");
-      status.hidden = !value;
-      status.textContent = count ? `${count} ${count === 1 ? "título encontrado" : "títulos encontrados"}.` : "Nenhum título encontrado.";
-      return;
+      return updateTocFilter(tocSearch.closest(".rail-panel"));
     }
     const networkSearch = event.target.closest("[data-network-search]");
     if (!networkSearch) return;
@@ -1708,6 +2121,18 @@
   });
 
   window.addEventListener?.("resize", updateSiteHeaderHeight);
+  const responsiveLayout = window.matchMedia?.("(max-width: 900px)");
+  responsiveLayout?.addEventListener?.("change", () => render());
+  window.addEventListener?.("popstate", restoreRoute);
+  window.addEventListener?.("hashchange", restoreRoute);
   window.MeuAcervoV2 = { state, render, setView, runTextSearch };
+  const initialEntry = window.history?.state;
+  const initialRoute = readRoute(window.location?.hash || "");
+  if (initialRoute) applyRoute(initialRoute, initialEntry);
+  restoringRoute = true;
   render();
+  if (initialEntry?.catalogueRoute && initialEntry.ui) restoreUiContext(initialEntry.ui);
+  restoringRoute = false;
+  syncRoute(true);
+  if (state.view === "text" && state.query) void runTextSearch();
 })();
